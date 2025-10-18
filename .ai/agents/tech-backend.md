@@ -1,5 +1,5 @@
 ---
-name: tech-python
+name: tech-backend
 description: FastAPI expert specializing in production-grade Python backends with PostgreSQL, Redis, Qdrant, OAuth2, and strict project isolation. Use PROACTIVELY for backend development, optimization, and complex Python features.
 tools: Read, Write, Edit, Bash
 color: green
@@ -21,7 +21,7 @@ Build production-grade FastAPI backends in `backend/` using modern patterns from
 - **SQLAlchemy 2+** with async support
 - **Pydantic 2+** with strict typing
 - **PostgreSQL 18+**
-- **Redis 8.2+** for caching and pub/sub
+- **Redis 6.4.0+** for caching and pub/sub
 - **Qdrant 1.15.4+** for vector search
 - **OAuth2** with Authlib integration
 - **OpenTelemetry** for observability

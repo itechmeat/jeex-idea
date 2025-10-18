@@ -131,7 +131,7 @@ CRITICAL ARCHITECTURE REQUIREMENTS (from specs.md & architecture.md):
 - NO default project fallbacks - project_id ALWAYS required (UUID, never Optional)
 - STRICT project_id isolation in ALL database queries (project-scoped data access)
 - Language isolation: project language determined via LLM, applied to all documents/interactions
-- FastAPI 0.116.2+ with async I/O, PostgreSQL 18+, Redis 8.2+, Qdrant 1.15.4+
+- FastAPI 0.116.2+ with async I/O, PostgreSQL 18+, Redis 6.4.0+, Qdrant 1.15.4+
 - Schema-driven: Pydantic as single source of truth (validation + API contracts + docs)
 - SQLAlchemy models as source of truth (Alembic autogenerate migrations)
 - OAuth2 (Twitter only in MVP), SSE streaming, OpenTelemetry tracing

@@ -1,0 +1,319 @@
+version: '3.8'
+
+x-common-variables: &common-variables
+  # Environment
+  ENVIRONMENT: development
+  # Project isolation
+  PROJECT_ID: jeex-idea-dev
+
+x-common-healthcheck: &common-healthcheck
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 40s
+
+x-common-security: &common-security
+  # Resource limits for security
+  mem_limit: 512m
+  cpus: 0.5
+  # Restart policy
+  restart: unless-stopped
+
+networks:
+  jeex-frontend:
+    driver: bridge
+    name: jeex-frontend
+    # For frontend-to-backend communication
+    attachable: true
+
+  jeex-backend:
+    driver: bridge
+    name: jeex-backend
+    # Internal service-to-service communication
+    internal: false
+    attachable: true
+
+  jeex-data:
+    driver: bridge
+    name: jeex-data
+    # Database and cache service isolation
+    internal: false
+    attachable: true
+    ipam:
+      config:
+        - subnet: 172.19.0.0/16
+
+volumes:
+  postgres_data:
+    driver: local
+    name: jeex-postgres-data
+
+  qdrant_data:
+    driver: local
+    name: jeex-qdrant-data
+
+  redis_data:
+    driver: local
+    name: jeex-redis-data
+
+  otel_logs:
+    driver: local
+    name: jeex-otel-logs
+
+  backend-pip-cache:
+    driver: local
+    name: jeex-backend-pip-cache
+
+services:
+  # PostgreSQL 18 - Primary Database
+  postgres:
+    image: postgres:18-alpine
+    container_name: jeex-postgres
+    hostname: postgres
+    networks:
+      - jeex-data
+    ports:
+      - "5220:5432"
+    environment:
+      <<: *common-variables
+      POSTGRES_DB: jeex_idea
+      POSTGRES_USER: jeex_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jeex_secure_password}
+      # Additional PostgreSQL configuration
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+      # Performance tuning for development
+      # Note: shared_preload_libraries configured in init-db.sql for consistency
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-db.sql:/docker-entrypoint-initdb.d/01-init-db.sql:ro
+      - ./docker/postgres/pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf:ro
+    healthcheck:
+      <<: *common-healthcheck
+      test: ["CMD-SHELL", "pg_isready -U jeex_user -d jeex_idea"]
+    security_opt:
+      - no-new-privileges:true
+    user: postgres
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "track_activity_query_size=2048"
+      - "-c"
+      - "log_min_duration_statement=1000"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  # Redis 6.4.0+ - Cache and Queue
+  redis:
+    image: redis:7.2-alpine
+    container_name: jeex-redis
+    hostname: redis
+    networks:
+      - jeex-data
+    ports:
+      - "5240:6379"
+    environment:
+      <<: *common-variables
+    volumes:
+      - redis_data:/data
+      - ./docker/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      <<: *common-healthcheck
+      test: ["CMD", "redis-cli", "ping"]
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+          cpus: '0.25'
+
+  # Qdrant 1.15.4+ - Vector Database
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    container_name: jeex-qdrant
+    hostname: qdrant
+    networks:
+      - jeex-data
+    ports:
+      - "5230:6333"
+    environment:
+      <<: *common-variables
+      QDRANT__SERVICE__HTTP_PORT: 6333
+      QDRANT__SERVICE__GRPC_PORT: 6334
+      # Performance optimizations for development
+      QDRANT__STORAGE__PERFORMANCE__SEARCH_WAIT_RATE_LIMIT__DISABLED: "true"
+      QDRANT__SERVICE__MAX_REQUEST_SIZE_MB: 32
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      <<: *common-healthcheck
+      test: ["CMD-SHELL", "nc -z localhost 6333 || exit 1"]
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    container_name: jeex-otel-collector
+    hostname: otel-collector
+    networks:
+      - jeex-backend
+    ports:
+      - "4317:4317"  # OTLP gRPC receiver
+      - "4318:4318"  # OTLP HTTP receiver
+      - "8888:8888"  # Prometheus metrics
+    environment:
+      <<: *common-variables
+    volumes:
+      - otel_logs:/var/log/otel
+      - ./docker/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    healthcheck:
+      <<: *common-healthcheck
+      test: ["CMD-SHELL", "pgrep -f 'otelcol-contrib' || exit 1"]
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+
+  # FastAPI Backend Service
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: jeex-api
+    hostname: api
+    networks:
+      - jeex-frontend
+      - jeex-backend
+      - jeex-data
+    ports:
+      - "5210:8000"
+    environment:
+      <<: *common-variables
+      # Database configuration
+      DATABASE_URL: postgresql://jeex_user:${POSTGRES_PASSWORD:-jeex_secure_password}@postgres:5432/jeex_idea
+      DATABASE_POOL_SIZE: 10
+      DATABASE_MAX_OVERFLOW: 20
+
+      # Vector database configuration
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: jeex_memory
+      QDRANT_TIMEOUT: 30
+
+      # Redis configuration
+      REDIS_URL: redis://redis:6379
+      REDIS_MAX_CONNECTIONS: 10
+
+      # API configuration
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      API_RELOAD: true
+      API_WORKERS: 1
+
+      # Security configuration
+      SECRET_KEY: ${JWT_SECRET_KEY:-jeex_development_secret_key_change_in_production}
+      CORS_ORIGINS: http://localhost:5200,http://localhost:3000
+      CORS_CREDENTIALS: true
+
+      # OpenTelemetry configuration
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: jeex-idea-api
+      OTEL_SERVICE_VERSION: 0.1.0
+      OTEL_RESOURCE_ATTRIBUTES: service.name=jeex-idea-api,service.version=0.1.0,environment=development
+
+      # Development specific
+      DEBUG: true
+      LOG_LEVEL: DEBUG
+    volumes:
+      - ./backend:/app:delegated
+      - /app/__pycache__
+      # Cache pip dependencies
+      - backend-pip-cache:/root/.cache/pip
+    healthcheck:
+      <<: *common-healthcheck
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      otel-collector:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: jeex-nginx
+    hostname: nginx
+    networks:
+      - jeex-frontend
+      - jeex-backend
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      <<: *common-variables
+      # Upstream configuration
+      API_UPSTREAM_HOST: api
+      API_UPSTREAM_PORT: 8000
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
+      - ./docker/nginx/logs:/var/log/nginx
+    healthcheck:
+      <<: *common-healthcheck
+      test: ["CMD-SHELL", "wget -qO- http://localhost/nginx-health >/dev/null 2>&1 || exit 1"]
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
