@@ -1,0 +1,98 @@
+[command]
+name = "commit-suggest"
+description = "Suggest branch name and commit message based on Conventional Commits specification"
+enabled = true
+visibility = "normal"
+
+# Command accepts optional argument with context
+requires_argument = false
+argument_type = "optional"
+argument_description = "Optional context or description of changes to analyze"
+
+[execution]
+# Simple single-agent execution
+execution_mode = "direct"
+timeout = 60  # 1 minute for suggestion
+
+# No sub-agents needed
+allowed_tools = []
+
+[analysis]
+# What to analyze for suggestions
+analyze_git_status = true
+analyze_modified_files = true
+analyze_story_context = true
+analyze_file_patterns = true
+
+[conventional_commits]
+# Conventional Commits standard
+spec_version = "1.0.0"
+spec_url = "https://www.conventionalcommits.org/en/v1.0.0/"
+
+# Allowed types
+types = [
+  "feat",      # New feature
+  "fix",       # Bug fix
+  "docs",      # Documentation only
+  "style",     # Code style (formatting, semicolons, etc.)
+  "refactor",  # Code refactoring
+  "perf",      # Performance improvement
+  "test",      # Adding or updating tests
+  "chore",     # Maintenance tasks
+  "build",     # Build system or dependencies
+  "ci",        # CI/CD configuration
+  "revert"     # Revert previous commit
+]
+
+# Common scopes (auto-detected from file paths)
+scopes = [
+  "backend",
+  "frontend",
+  "api",
+  "db",
+  "auth",
+  "docs",
+  "tests",
+  "config",
+  "deps",
+  "stories",
+  "agents"
+]
+
+[branch_naming]
+# Branch naming patterns
+pattern = "{type}/{scope}-{description}"
+fallback_pattern = "{type}/{description}"
+max_length = 50
+separator = "-"
+lowercase = true
+
+[commit_message]
+# Commit message format
+header_max_length = 72
+body_wrap_length = 80
+include_body_suggestion = true
+include_footer_suggestion = true
+
+# Breaking changes detection
+detect_breaking_changes = true
+breaking_change_keywords = ["BREAKING CHANGE", "BREAKING", "BC"]
+
+[suggestions]
+# How many suggestions to provide
+max_suggestions = 3
+include_alternative_scopes = true
+include_reasoning = true
+
+[integration]
+# Related files
+references_git_status = true
+references_story_files = "stories/**"
+
+[examples]
+basic = "/commit-suggest"
+with_context = "/commit-suggest 'Added user authentication with OAuth2'"
+from_story = "/commit-suggest 'Story: user-authentication, Task: 2.1'"
+breaking_change = "/commit-suggest 'Removed old API endpoints'"
+
+

@@ -1,0 +1,177 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "backend": {
+      "description": "Backend development with FastAPI, SQLAlchemy, Pydantic",
+      "mode": "primary",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "prompt": "{file:./.ai/agents/tech-backend.md}",
+      "temperature": 0.3
+    },
+    "frontend": {
+      "description": "Frontend development with React 19+, TypeScript, TanStack DB",
+      "mode": "primary",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "prompt": "{file:./.ai/agents/tech-frontend.md}",
+      "temperature": 0.3
+    },
+    "architect": {
+      "description": "Solution/Backend Architect - system architecture design and documentation",
+      "mode": "subagent",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "prompt": "{file:./.ai/agents/tech-architect.md}",
+      "temperature": 0.2,
+      "tools": {
+        "bash": false
+      }
+    },
+    "pm": {
+      "description": "Technical Project Manager - implementation planning and progress tracking",
+      "mode": "subagent",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "prompt": "{file:./.ai/agents/tech-pm.md}",
+      "temperature": 0.3,
+      "tools": {
+        "bash": false
+      }
+    },
+    "qa": {
+      "description": "QA Engineer - testing strategy, test implementation, quality assurance",
+      "mode": "subagent",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "prompt": "{file:./.ai/agents/tech-qa.md}",
+      "temperature": 0.2
+    },
+    "postgres": {
+      "description": "PostgreSQL specialist - database design, migrations, optimization",
+      "mode": "subagent",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "prompt": "{file:./.ai/agents/tech-postgres.md}",
+      "temperature": 0.2,
+      "tools": {
+        "bash": true
+      }
+    },
+    "redis": {
+      "description": "Redis specialist - caching, pub/sub, rate limiting",
+      "mode": "subagent",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "prompt": "{file:./.ai/agents/tech-redis.md}",
+      "temperature": 0.2
+    },
+    "vector-db": {
+      "description": "Qdrant specialist - vector search, embeddings, semantic search",
+      "mode": "subagent",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "prompt": "{file:./.ai/agents/tech-vector-db.md}",
+      "temperature": 0.2
+    },
+    "devops": {
+      "description": "DevOps specialist - Docker, deployment, infrastructure",
+      "mode": "subagent",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "prompt": "{file:./.ai/agents/tech-devops.md}",
+      "temperature": 0.2,
+      "tools": {
+        "bash": true
+      }
+    }
+  },
+  "command": {
+    "dev": {
+      "description": "Standard development workflow with story context",
+      "template": "{file:./.ai/commands/develop.prompt.md}",
+      "model": "anthropic/claude-sonnet-4-20250514"
+    },
+    "dev:cov": {
+      "description": "Development with Chain-of-Verification - generate 3 variants and select optimal",
+      "template": "{file:./.ai/commands/develop-cov.prompt.md}",
+      "model": "anthropic/claude-sonnet-4-20250514"
+    },
+    "test": {
+      "description": "Run comprehensive testing with automatic issue fixing",
+      "template": "{file:./.ai/commands/test.prompt.md}",
+      "model": "anthropic/claude-sonnet-4-20250514"
+    },
+    "pre-commit": {
+      "description": "Pre-commit checks - linting, security, project isolation",
+      "template": "{file:./.ai/commands/pre-commit.prompt.md}",
+      "model": "anthropic/claude-sonnet-4-20250514"
+    },
+    "review": {
+      "description": "Code review with CodeRabbit-style analysis",
+      "template": "{file:./.ai/commands/coderabbit.prompt.md}",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "tools": {
+        "write": false,
+        "edit": false
+      }
+    },
+    "explain": {
+      "description": "Explain code structure and functionality",
+      "template": "{file:./.ai/commands/utilities/explain-code.md}",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "tools": {
+        "write": false,
+        "edit": false
+      }
+    },
+    "refactor": {
+      "description": "Refactor code with best practices",
+      "template": "{file:./.ai/commands/utilities/refactor-code.md}",
+      "model": "anthropic/claude-sonnet-4-20250514"
+    },
+    "check": {
+      "description": "Check file for issues and violations",
+      "template": "{file:./.ai/commands/utilities/check-file.md}",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "tools": {
+        "write": false,
+        "edit": false
+      }
+    },
+    "dive": {
+      "description": "Deep dive into directory structure",
+      "template": "{file:./.ai/commands/utilities/directory-deep-dive.md}",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "tools": {
+        "write": false,
+        "edit": false
+      }
+    },
+    "think": {
+      "description": "Ultra-deep thinking for complex problems",
+      "template": "{file:./.ai/commands/utilities/ultra-think.md}",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "tools": {
+        "write": false,
+        "edit": false,
+        "bash": false
+      }
+    },
+    "git-status": {
+      "description": "Analyze git status and suggest actions",
+      "template": "{file:./.ai/commands/utilities/git-status.md}",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "tools": {
+        "write": false,
+        "edit": false
+      }
+    },
+    "architecture": {
+      "description": "Explore architectural scenarios and trade-offs",
+      "template": "{file:./.ai/commands/utilities/architecture-scenario-explorer.md}",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "tools": {
+        "write": false,
+        "edit": false,
+        "bash": false
+      }
+    }
+  },
+  "permission": {
+    "edit": "ask",
+    "bash": "ask",
+    "webfetch": "allow"
+  }
+}

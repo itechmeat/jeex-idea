@@ -1,0 +1,111 @@
+[command]
+name = "plan"
+description = "Story planning and progress tracking using EARS-compliant requirements and task management"
+enabled = true
+visibility = "normal"
+
+# Command requires explicit instruction argument
+requires_argument = true
+argument_type = "required"
+argument_description = "Instruction for what to plan, create, or update"
+
+[execution]
+# Planning workflow uses single specialized agent
+execution_mode = "single_agent"
+timeout = 600  # 10 minutes for complex planning tasks
+
+# Allow Task tool to invoke tech-pm agent
+allowed_tools = ["Task"]
+
+[agent]
+# Always uses tech-pm agent
+type = "tech-pm"
+mandatory = true
+
+# Agent modes (auto-selected based on instruction)
+modes = [
+  "planning",           # Create plan.md with story list
+  "story_creation",     # Create detailed story folder
+  "progress_tracking",  # Update task completion
+  "history_tracking"    # Move to backlog
+]
+
+[stories]
+# Story file structure
+plan_file = "stories/plan.md"
+backlog_file = "stories/backlog.md"
+story_folder_pattern = "stories/<slug>/"
+required_files = [
+  "design.md",
+  "requirements.md",
+  "tasks.md"
+]
+
+# Story requirements
+naming_convention = "kebab-case"
+language = "english"
+hierarchy = "flat"  # No epic structure
+
+[requirements]
+# EARS standard compliance
+standard = "EARS"
+standard_url = "https://alistairmavin.com/ears/"
+strict_compliance = true
+
+# EARS patterns required
+patterns = [
+  "ubiquitous",        # The <system> shall
+  "state_driven",      # While <condition>, the <system> shall
+  "event_driven",      # When <trigger>, the <system> shall
+  "optional_feature",  # Where <feature>, the <system> shall
+  "unwanted_behaviour", # If <trigger>, then the <system> shall
+  "complex"            # Combined patterns
+]
+
+[tasks]
+# Task format requirements
+checkbox_format = "[x]"  # Not emoji
+max_depth = 2  # Phases → tasks only
+require_acceptance_criteria = true
+require_verification = true
+require_req_id_links = true
+
+[validation]
+# Pre-execution validation
+validate_story_structure = true
+check_ears_compliance = true
+verify_traceability = true
+
+# File naming validation
+allow_non_english_names = false
+allow_footers = false
+allow_temporal_references = false
+
+[integration]
+# Integration with other commands
+works_with = [
+  "develop",  # Develop command uses stories created by plan
+  "test"      # Testing validates story requirements
+]
+
+# Documentation references
+references_architecture = "docs/architecture.md"
+references_specs = "docs/specs.md"
+references_about = "docs/about.md"
+
+[output]
+# Expected output format
+report_format = "markdown"
+include_sections = [
+  "action_summary",
+  "files_created_updated",
+  "next_steps"
+]
+
+[examples]
+planning = "/plan 'Create implementation plan from docs/'"
+story_creation = "/plan 'Create detailed story for user authentication'"
+progress_update = "/plan 'Mark tasks 1.1, 1.2 complete in auth story'"
+backlog_move = "/plan 'Move auth story to backlog with summary'"
+story_refinement = "/plan 'Add performance requirements to search story'"
+

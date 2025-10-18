@@ -1,0 +1,19 @@
+# Global owners
+* @itechmeat
+
+# Frontend specific
+frontend/ @itechmeat
+*.tsx @itechmeat
+*.css @itechmeat
+
+# Backend specific
+backend/ @itechmeat
+*.py @itechmeat
+
+# Infrastructure
+docker-compose.yml @itechmeat
+Dockerfile @itechmeat
+Makefile @itechmeat
+
+# Git hooks and GitHub configs
+.github/ @itechmeat

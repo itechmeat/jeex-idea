@@ -1,0 +1,80 @@
+# Ruff configuration for JEEX Plan project
+# Separate configuration file to reduce command-line complexity
+
+[tool.ruff]
+# Exclude common directories
+exclude = [
+    ".git",
+    "__pycache__",
+    "venv",
+    "env",
+    ".env",
+    "build",
+    "dist",
+]
+
+# Target Python version
+target-version = "py312"
+
+# Maximum line length
+line-length = 88
+
+[tool.ruff.lint]
+# Select rules to enforce
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "I",   # isort
+    "N",   # pep8-naming
+    "ANN", # flake8-annotations
+    "S",   # flake8-bandit
+    "RUF", # Ruff-specific rules
+    "C90", # mccabe
+]
+
+# Ignore specific rules that are not relevant for this project
+ignore = [
+    "E501",   # Line too long (handled by formatter)
+    "B904",   # Use raise from ... (optional for better error handling)
+    "BLE001", # No blind except Exception (project allows broad exception handling)
+    "G201",   # Logging usage with .format() (allowing for flexibility)
+    "ANN001", # Missing type annotation for function arguments
+    "ANN002", # Missing type annotation for *args
+    "ANN003", # Missing type annotation for **kwargs
+    "ANN201", # Missing return type annotation for public functions
+    "ANN202", # Missing return type annotation for private functions
+    "ANN205", # Missing return type annotation for static methods
+    "RUF012", # Mutable class attributes (project design choice)
+    "S101",   # Use of assert detected (allowed for development)
+    "S104",   # Hardcoded bind all interfaces (allowed in development)
+    "S105",   # Hardcoded password (false positives in config)
+    "S107",   # Hardcoded password parameter (false positives in config)
+    "SIM102",  # Nested if statements (allowed for readability)
+    "SIM103",  # Nested if statements (allowed for readability)
+    "UP038",   # Use | instead of Union for type hints (optional)
+    "RUF001",  # Ambiguous Unicode character (false positives)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test files can have more relaxed rules
+"tests/**" = [
+    "S101",   # assert allowed in tests
+    "ANN001", # Type annotations optional in tests
+    "ANN002", # *args annotations optional in tests
+    "ANN003", # **kwargs annotations optional in tests
+    "ANN201", # Return type annotations optional in tests
+]
+
+[tool.ruff.format]
+# Quote style for strings
+quote-style = "double"
+
+# Indentation style
+indent-style = "space"
+
+# Line ending style
+line-ending = "auto"
