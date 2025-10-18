@@ -1,0 +1,16 @@
+{
+  "description": "Automatically run relevant tests after code changes. Detects test files and runs appropriate test commands based on file extensions and project structure.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".ai/hooks/testing/test-runner.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

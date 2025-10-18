@@ -1,0 +1,213 @@
+name = "reviewer"
+description = "Run comprehensive code review for story completion, architecture compliance, and technical standards"
+allowed-tools = ["Bash(git:*), Bash(cat:*), Bash(grep:*), Bash(find:*), Task"]
+
+[prompt]
+content = """
+# Story Code Review Command
+
+Run comprehensive code review of current git changes to verify story completion, architecture compliance, technical standards adherence, and code quality.
+
+## Review Scope
+
+This command reviews code changes against:
+
+1. **Story Requirements**: Check implementation against story tasks and acceptance criteria
+2. **Architecture Compliance**: Verify alignment with `docs/architecture.md` decisions
+3. **Tech Stack Compliance**: Validate against `docs/specs.md` specifications
+4. **Project Isolation**: Enforce strict `project_id` scoping at all layers
+5. **Security Standards**: Check authentication, authorization, data protection
+6. **Code Quality**: Detect anti-patterns, fallbacks, mocks, hardcoded values
+7. **Best Practices**: Validate async patterns, error handling, testing coverage
+
+## Process
+
+1. **Change Detection Phase**: Get list of changed files from git
+2. **Story Identification Phase**: Determine which story is being implemented
+3. **Context Loading Phase**: Load story requirements and architectural docs
+4. **Agent Activation Phase**: Activate tech-reviewer agent with full context
+5. **Review Phase**: Agent performs comprehensive multi-phase review
+6. **Reporting Phase**: Generate structured review report with blocking/non-blocking issues
+7. **Report File Creation**: Save review report to `reviews/REVIEW_REPORT.md`
+
+## Instructions
+
+**Step 1: Detect Git Changes**
+
+Get the list of all changed files in the current branch:
+
+!bash -lc 'echo "=== Git Status ===" && git status && echo "" && echo "=== Changed Files ===" && git diff --name-status origin/main...HEAD 2>/dev/null || git diff --name-status --cached && echo "" && echo "=== Staged Changes Summary ===" && git diff --cached --stat && echo "" && echo "=== Unstaged Changes Summary ===" && git diff --stat'
+
+**Step 2: Identify Current Story**
+
+Determine which story is being implemented:
+
+!bash -lc 'CURRENT_BRANCH=$(git branch --show-current) && echo "Current Branch: $CURRENT_BRANCH" && echo "" && echo "=== Recent Commits ===" && git log --oneline -5 && echo "" && echo "=== Available Stories ===" && ls -1 stories/ 2>/dev/null | grep -v "plan.md" | grep -v "backlog.md" | head -10 || echo "No stories directory found"'
+
+**Step 3: Load Story Context (if applicable)**
+
+If a story is identified from branch name or commits, load its context:
+
+!bash -lc 'if [ -d stories ]; then echo "=== Story Context Available ==="; for story in stories/*/; do if [ -d "$story" ]; then basename "$story"; fi; done | head -5; else echo "No stories found"; fi'
+
+**Step 4: Activate Reviewer Agent**
+
+Activate the tech-reviewer agent with full context:
+
+Use the Task tool with parameters:
+- subagent_type: "tech-reviewer"
+- description: "Review code changes for story completion and compliance"
+- prompt: "Perform comprehensive code review of the current git changes.
+
+CONTEXT:
+- Changed Files: [from Step 1 output]
+- Current Branch: [from Step 2 output]
+- Available Stories: [from Step 3 output]
+- Custom Focus: {{args}} (if provided by user)
+
+REVIEW REQUIREMENTS:
+
+1. **Story Completion Verification**
+   - Identify which story is being implemented (check branch name, commits, or ask user)
+   - Load story requirements from: stories/<story-slug>/requirements.md
+   - Load story tasks from: stories/<story-slug>/tasks.md
+   - Verify each task's acceptance criteria is met
+   - Check that all requirements are addressed
+   - Confirm quality gates from tasks.md are satisfied
+
+2. **Architecture Compliance Check**
+   - Read docs/architecture.md for architectural decisions
+   - Validate component selection and integration patterns
+   - Check API contracts match specifications
+   - Verify proper layer separation
+   - Confirm observability instrumentation present
+
+3. **Tech Stack Compliance Validation**
+   - Read docs/specs.md for minimum versions and standards
+   - Check component versions meet requirements
+   - Validate technology choices (no prohibited libraries)
+   - Ensure language detection via LLM only (NO langdetect/langid/fastText)
+   - Confirm OAuth2 implementation (Twitter only in MVP)
+
+4. **Project Isolation Enforcement** (CRITICAL)
+   - Verify ALL database queries filter by project_id
+   - Check Qdrant searches include project_id + language filters
+   - Validate Redis keys use project_id namespace
+   - Ensure API endpoints validate project access
+   - Confirm no cross-project data leakage possible
+
+5. **Security & Best Practices Review**
+   - Search for hardcoded credentials/secrets
+   - Verify input validation (Pydantic models)
+   - Review error handling patterns
+   - Validate async patterns (no sync I/O in async context)
+   - Check for fallback logic (PROHIBITED - default values for project_id)
+
+6. **Code Quality Assessment**
+   - Review type hints and documentation
+   - Check for TODOs/FIXMEs without tracking
+   - Validate test coverage
+   - Assess maintainability
+
+DELIVERABLE:
+
+**CRITICAL: Save review report to file reviews/REVIEW_REPORT.md**
+
+The report MUST be written in:
+- **English** by default
+- **User's language** if specified in custom focus argument (e.g., "review in Russian", "отчет на русском")
+
+After generating the complete review, save it to reviews/REVIEW_REPORT.md file. Create the reviews/ directory if it doesn't exist.
+
+Provide structured review report following this format:
+
+# Code Review: [Story Name]
+
+## ✅ Story Completion: [COMPLETE | INCOMPLETE | PARTIAL]
+[Requirements coverage details]
+
+## ✅ Architecture Compliance: [PASS | FAIL | WARNING]
+[Architecture alignment assessment]
+
+## ✅ Tech Stack Compliance: [PASS | FAIL | WARNING]
+[Specs validation results]
+
+## ✅ Project Isolation: [PASS | FAIL | CRITICAL]
+[Isolation audit findings with specific line numbers]
+
+## ✅ Security Review: [PASS | FAIL | WARNING]
+[Security assessment]
+
+## ✅ Code Quality: [PASS | FAIL | WARNING]
+[Quality evaluation]
+
+## 📋 Required Changes (BLOCKING)
+[List of critical issues with code examples showing current vs. required]
+
+## ⚠️ Recommended Improvements (NON-BLOCKING)
+[List of suggestions for better code quality]
+
+## 📊 Review Summary
+- Story Completion: X% (N/M requirements)
+- Blocking Issues: N
+- Warnings: N
+- Recommendations: N
+- Overall Status: [PASS | BLOCKED | WARNING]
+
+## 🎯 Next Steps
+[Clear action items for the developer]
+"
+
+**Step 5: Present Review Results**
+
+The tech-reviewer agent will provide a comprehensive structured report. Based on the outcome:
+
+- **BLOCKED**: Critical issues must be fixed before merge
+- **WARNING**: Consider addressing recommended improvements
+- **PASS**: Ready for final approval
+
+## Review Focus Options
+
+Custom focus can be specified via argument (optional):
+
+- {{args}} = "focus on security" → emphasize security audit (English report)
+- {{args}} = "check project isolation only" → focus on isolation (English report)
+- {{args}} = "verify API contracts" → focus on API compliance (English report)
+- {{args}} = "quick review" → abbreviated review (English report)
+- {{args}} = "review in Russian" → full review with Russian report
+- {{args}} = "отчет на русском" → full review with Russian report
+- No argument → full comprehensive review (default, English report)
+
+## Critical Requirements
+
+- **Always use exact `subagent_type: "tech-reviewer"`**
+- **Pass complete git context** from Steps 1-3
+- **Include custom focus** from user argument if provided
+- **Wait for complete review** - do not interrupt
+
+## Expected Output
+
+A structured review report saved to **reviews/REVIEW_REPORT.md** with:
+- Clear pass/fail status for each review area
+- Specific file and line numbers for issues
+- Code examples showing current vs. required implementations
+- Prioritized list of blocking vs. recommended changes
+- Actionable next steps
+- Report language: English by default, or user-specified language
+
+## Usage Examples
+
+- /dev:reviewer - comprehensive review, saves to reviews/REVIEW_REPORT.md (English)
+- /dev:reviewer "focus on security and isolation" - targeted security review (English)
+- /dev:reviewer "quick check" - fast review (English)
+- /dev:reviewer "verify story setup-docker is complete" - story-specific review (English)
+- /dev:reviewer "review in Russian" - comprehensive review with Russian report
+- /dev:reviewer "отчет на русском языке" - comprehensive review with Russian report
+
+**Important:** 
+- This command only reviews code - it does not make changes
+- Review report is saved to **reviews/REVIEW_REPORT.md**
+- Report language: English by default, or specify in argument
+- Use appropriate agents to fix identified issues
+"""
+

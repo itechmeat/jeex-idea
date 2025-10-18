@@ -1,0 +1,107 @@
+[command]
+name = "develop"
+description = "Development workflow - implement features following story-based planning with automated agent orchestration"
+enabled = true
+visibility = "normal"
+
+# Command requires explicit feature description argument
+requires_argument = true
+argument_type = "required"
+argument_description = "Feature description with optional story context: <description> [story:slug] [task:id]"
+
+[execution]
+# Development workflow orchestrates multiple agents
+execution_mode = "orchestrated"
+timeout = 3600  # 1 hour for complex development tasks
+
+# Allow Task tool to invoke sub-agents
+allowed_tools = ["Task"]
+
+[workflow]
+# Development follows strict workflow
+stages = [
+  "story_context",      # Identify/load story
+  "agent_selection",    # Choose appropriate agents
+  "implementation",     # Execute development
+  "quality_assurance",  # Run tests
+  "progress_tracking"   # Update story status
+]
+
+# Quality gates that must pass
+quality_gates = [
+  "project_isolation",
+  "schema_driven",
+  "no_fallbacks",
+  "tests_passing",
+  "traceability"
+]
+
+[agents]
+# Available development agents (orchestrated dynamically)
+development = [
+  "tech-backend",
+  "tech-frontend", 
+  "tech-postgres",
+  "tech-redis",
+  "tech-vector-db",
+  "tech-devops"
+]
+
+# Always invoked agents
+mandatory = [
+  "tech-qa",      # Testing after implementation
+  "tech-pm"       # Progress tracking
+]
+
+[stories]
+# Story integration
+plan_file = "stories/plan.md"
+backlog_file = "stories/backlog.md"
+story_structure = [
+  "design.md",
+  "requirements.md",
+  "tasks.md"
+]
+
+# Task tracking
+task_format = "checkbox"
+require_acceptance_criteria = true
+require_verification = true
+
+[validation]
+# Pre-execution validation
+check_story_exists = true
+check_task_format = true
+validate_requirements_ears = false  # Don't block on EARS (PM's job)
+
+# Post-execution validation
+verify_tests_pass = true
+verify_task_updates = true
+verify_traceability = true
+
+[reporting]
+# Final report sections
+report_format = "markdown"
+include_sections = [
+  "summary",
+  "completed_tasks",
+  "agents_activated",
+  "test_results",
+  "story_status",
+  "files_modified",
+  "next_steps"
+]
+
+[integration]
+# Integration with other commands
+runs_tests_via = "tech-qa"
+updates_progress_via = "tech-pm"
+references_architecture = "docs/architecture.md"
+references_specs = "docs/specs.md"
+
+[examples]
+basic = "/develop 'Implement user authentication with OAuth2'"
+with_story = "/develop 'Add document versioning API' story:document-versioning"
+with_task = "/develop 'Create database schema' story:project-management task:1.1"
+multiple_tasks = "/develop 'Complete data layer' story:projects task:1.1,1.2,1.3"
+

@@ -1,0 +1,173 @@
+#!/bin/bash
+
+# Pre-commit hook for JEEX Plan project
+# Runs linting checks for both frontend and backend before allowing commit
+
+set -euo pipefail
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+echo -e "${GREEN}🔍 Running pre-commit checks for entire project...${NC}"
+
+# Check if we're in the project root
+if [ ! -f "jeex-plan.code-workspace" ] && [ ! -f "Makefile" ]; then
+    echo -e "${RED}❌ Please run from project root directory (no workspace/Makefile found)${NC}"
+    exit 1
+fi
+
+# Function to check if command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+compose() {
+    if command_exists docker-compose; then
+        docker-compose "$@"
+    elif command_exists docker; then
+        docker compose "$@"
+    else
+        echo -e "${RED}❌ Neither docker-compose nor docker compose is available${NC}"
+        exit 1
+    fi
+}
+
+# Check if required tools are available
+if ! command_exists pnpm; then
+    echo -e "${RED}❌ pnpm not found. Please install pnpm first.${NC}"
+    exit 1
+fi
+# docker/compose availability is validated lazily via compose()
+
+# Check if backend is running
+if ! compose ps api 2>/dev/null | grep -q "Up"; then
+    echo -e "${YELLOW}⚠️  Backend not running. Starting services...${NC}"
+    compose up -d
+    # Wait for services to be healthy
+    echo -e "${YELLOW}  • Waiting for services to be healthy...${NC}"
+    timeout=60
+    while [ $timeout -gt 0 ]; do
+        if compose ps api 2>/dev/null | grep -q "Up.*healthy"; then
+            echo -e "${GREEN}  ✓ Services are healthy${NC}"
+            break
+        fi
+        sleep 2
+        timeout=$((timeout - 2))
+    done
+    if [ $timeout -le 0 ]; then
+        echo -e "${RED}❌ Services failed to become healthy within timeout${NC}"
+        exit 1
+    fi
+fi
+
+if [ -d "frontend" ]; then
+    echo -e "${YELLOW}📝 Frontend checks...${NC}"
+
+    echo -e "${YELLOW}  • Checking JavaScript/TypeScript with Biome...${NC}"
+    if ! (cd frontend && pnpm run lint:js); then
+        echo -e "${RED}❌ JavaScript/TypeScript linting failed!${NC}"
+        echo -e "${YELLOW}💡 Fix errors with: ${GREEN}cd frontend && pnpm run lint:js:fix${NC}"
+        exit 1
+    fi
+
+    echo -e "${YELLOW}  • Checking CSS with Stylelint...${NC}"
+    if ! (cd frontend && pnpm run lint:styles); then
+        echo -e "${RED}❌ CSS linting failed!${NC}"
+        echo -e "${YELLOW}💡 Fix errors with: ${GREEN}cd frontend && pnpm run lint:styles:fix${NC}"
+        exit 1
+    fi
+
+    echo -e "${YELLOW}  • Checking TypeScript types...${NC}"
+    if ! (cd frontend && pnpm run type-check); then
+        echo -e "${RED}❌ TypeScript type checking failed!${NC}"
+        echo -e "${YELLOW}💡 Fix type errors manually and try again${NC}"
+        exit 1
+    fi
+
+    echo -e "${YELLOW}  • Checking code formatting...${NC}"
+    if ! (cd frontend && pnpm run format:check); then
+        echo -e "${RED}❌ Code formatting issues found!${NC}"
+        echo -e "${YELLOW}💡 Fix formatting with: ${GREEN}cd frontend && pnpm run format${NC}"
+        exit 1
+    fi
+else
+    echo -e "${YELLOW}ℹ️  Skipping frontend checks (frontend/ not found)${NC}"
+fi
+
+echo -e "${YELLOW}📋 Markdown checks...${NC}"
+
+echo -e "${YELLOW}  • Checking Markdown files...${NC}"
+if ! npx markdownlint-cli2; then
+    echo -e "${RED}❌ Markdown linting failed!${NC}"
+    echo -e "${YELLOW}💡 Fix errors with: ${GREEN}make markdown-fix${NC}"
+    exit 1
+fi
+
+# Backend checks (optional if compose is available)
+if [ -f "docker-compose.yml" ] || [ -f "compose.yaml" ] || [ -f "compose.yml" ]; then
+    echo -e "${YELLOW}🗃️ SQL checks...${NC}"
+
+    echo -e "${YELLOW}  • Checking SQL files with SQLFluff...${NC}"
+    if ! compose exec -T api python -m sqlfluff lint . 2>/dev/null; then
+        echo -e "${RED}❌ SQL linting failed!${NC}"
+        echo -e "${YELLOW}💡 Fix errors with: ${GREEN}make sql-fix${NC}"
+        exit 1
+    fi
+
+    echo -e "${YELLOW}🐍 Backend checks...${NC}"
+
+    echo -e "${YELLOW}  • Checking Python code with Ruff...${NC}"
+    if ! compose exec -T api ruff check app 2>/dev/null; then
+        echo -e "${RED}❌ Python linting failed!${NC}"
+        echo -e "${YELLOW}💡 Fix errors with: ${GREEN}make lint-fix${NC}"
+        exit 1
+    fi
+
+    echo -e "${YELLOW}  • Checking Python formatting...${NC}"
+    if ! compose exec -T api ruff format . --check 2>/dev/null; then
+        echo -e "${RED}❌ Python formatting issues found!${NC}"
+        echo -e "${YELLOW}💡 Fix formatting with: ${GREEN}make format${NC}"
+        exit 1
+    fi
+
+    echo -e "${YELLOW}  • Checking Python types with MyPy...${NC}"
+    if ! compose exec -T api python -m mypy app/ 2>/dev/null; then
+        echo -e "${RED}❌ Python type checking failed!${NC}"
+        echo -e "${YELLOW}💡 Fix type errors manually and try again${NC}"
+        exit 1
+    fi
+else
+    echo -e "${YELLOW}ℹ️  Skipping backend checks (no compose file found)${NC}"
+fi
+
+echo -e "${YELLOW}🐳 Docker checks...${NC}"
+
+echo -e "${YELLOW}  • Checking backend/Dockerfile...${NC}"
+if ! docker run --rm -v "$(pwd)/.hadolint.yaml:/.config/hadolint.yaml" -i hadolint/hadolint < backend/Dockerfile; then
+    echo -e "${RED}❌ Dockerfile linting failed!${NC}"
+    echo -e "${YELLOW}💡 Check Docker best practices: ${GREEN}make docker-lint${NC}"
+    echo -e "${YELLOW}💡 Run full security scan: ${GREEN}make security-scan${NC}"
+    # Don't exit on Docker issues - just warn
+fi
+
+echo -e "${YELLOW}  • Checking backend/Dockerfile.simple...${NC}"
+if ! docker run --rm -v "$(pwd)/.hadolint.yaml:/.config/hadolint.yaml" -i hadolint/hadolint < backend/Dockerfile.simple; then
+    echo -e "${RED}❌ Dockerfile.simple linting failed!${NC}"
+    echo -e "${YELLOW}💡 Check Docker best practices: ${GREEN}make docker-lint${NC}"
+    # Don't exit on Docker issues - just warn
+fi
+
+echo -e "${YELLOW}🔒 Security checks...${NC}"
+
+echo -e "${YELLOW}  • Running security scan with Checkov...${NC}"
+if ! docker run --rm -v "$(pwd):/tf" bridgecrew/checkov -d /tf --framework dockerfile --quiet; then
+    echo -e "${RED}❌ Security scan found issues!${NC}"
+    echo -e "${YELLOW}💡 Run full security scan: ${GREEN}make security-scan${NC}"
+    # Don't exit on security issues - just warn
+fi
+
+echo -e "${GREEN}✅ All pre-commit checks passed!${NC}"
+echo -e "${GREEN}🚀 Proceeding with commit...${NC}"

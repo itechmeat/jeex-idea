@@ -1,0 +1,241 @@
+name = "dev:cov"
+description = "Development with Chain-of-Verification methodology - generate 3 solution variants, verify independently, select optimal approach"
+usage_tip = "/dev:cov 'feature description' [story:slug] [task:id]"
+
+[prompt]
+content = """
+You are orchestrating a Chain-of-Verification (CoV) development workflow. This is a systematic approach that generates multiple solution variants, verifies each independently against criteria, and selects the optimal approach through comparative analysis.
+
+## Your Responsibilities
+
+1. **Parse user request** and determine story context
+2. **If story not specified** - ask user which story from plan.md
+3. **Load story files** (design.md, requirements.md, tasks.md)
+4. **Execute CoV Stages 1-5** systematically
+5. **Activate development agents** with selected approach
+6. **Quality assurance** through tech-qa agent
+7. **Progress tracking** through tech-pm agent
+8. **Generate final report** with CoV analysis
+
+## Critical Chain-of-Verification Rules
+
+**STAGE 1: Variant Generation**
+- Generate EXACTLY 3 fundamentally different architectural approaches
+- Each variant must differ in core pattern, data flow, and trade-offs
+- Document architecture, components, data flow, tech choices for each
+- Ensure variants are genuinely distinct (not minor parameter tweaks)
+
+**STAGE 2: Criteria Definition**
+- Define 5 question sets: Requirements, Architecture, Quality, Implementation, Technical Debt
+- Each question set has 3-5 specific verification questions
+- Use objective, measurable criteria where possible
+
+**STAGE 3: Independent Verification**
+- Answer ALL verification questions for EACH variant INDEPENDENTLY
+- Do not compare variants while answering questions
+- Provide evidence/explanation for each answer
+- Use YES/NO, numeric values, or categorical ratings
+
+**STAGE 4: Comparative Analysis**
+- Create comparison matrix with weighted criteria
+- CRITICAL criteria must pass (project isolation, security, requirements)
+- HIGH criteria need >70% pass rate
+- MEDIUM and LOW criteria contribute to total score
+- Calculate weighted scores for each variant
+
+**STAGE 5: Selection Decision**
+- Apply decision framework: CRITICAL → HIGH → Weighted Score
+- Document rationale with specific evidence
+- Identify rejected variants with clear reasons
+- Consider hybrid approaches if beneficial
+- Create ADR (Architecture Decision Record) in story folder
+
+**STAGE 6: Implementation**
+- Proceed with standard development workflow
+- Use selected variant's architecture
+- Reference ADR in agent prompts
+- Verify implementation matches selected variant
+
+## Agent Activation Strategy
+
+After CoV selection, activate agents based on selected variant:
+
+**If story/task not specified:**
+
+Ask user:
+- "Which story from stories/plan.md are you implementing?"
+- "Which task(s) from stories/<slug>/tasks.md?"
+- "Is this a new unplanned feature (needs story creation)?"
+
+**After loading story context:**
+
+Generate 3 solution variants, verify, select optimal approach, then activate agents.
+
+**Backend Development (tech-backend):**
+- Activate if selected variant involves: API endpoints, business logic, FastAPI, SQLAlchemy, OAuth2, SSE, agent orchestration
+- Pass selected variant architecture details in prompt
+
+**Frontend Development (tech-frontend):**
+- Activate if selected variant involves: React components, TanStack DB, CSS Modules, API clients, SSE consumers
+- Pass selected variant UI/UX pattern in prompt
+
+**Database (tech-postgres):**
+- Activate if selected variant involves: Schema changes, migrations, indexes, project isolation enforcement
+- Pass selected variant data model in prompt
+
+**Caching (tech-redis):**
+- Activate if selected variant involves: Cache layer, pub/sub, rate limiting, queues
+- Pass selected variant caching strategy in prompt
+
+**Vector Search (tech-vector-db):**
+- Activate if selected variant involves: Qdrant, embeddings, semantic search
+- Pass selected variant vector approach in prompt
+
+**Infrastructure (tech-devops):**
+- Activate if selected variant involves: Docker, services, environment, deployment
+- Pass selected variant infrastructure in prompt
+
+**Quality Assurance (tech-qa) - MANDATORY:**
+- Always activate after development agents complete
+- Pass CoV verification criteria (performance targets, requirements)
+- Verify implementation matches selected variant
+
+**Progress Tracking (tech-pm) - MANDATORY:**
+- Always activate after successful testing
+- Pass ADR reference and CoV decision summary
+- Update tasks.md and plan.md/backlog.md
+
+## Agent Communication Protocol
+
+When invoking agents after CoV analysis:
+
+Use the Task tool with parameters:
+- subagent_type: "tech-[backend|frontend|postgres|redis|vector-db|devops|qa|pm]"
+- description: "[Brief task summary]"
+- prompt: "Feature: [User's feature description]
+
+  CoV Analysis Result:
+  - Selected Approach: Variant [X] - [Approach Name]
+  - Decision Rationale: [Brief key reason]
+  - ADR Reference: stories/<slug>/adr-[feature].md
+  
+  Story Context:
+  - Location: stories/<slug>/
+  - Design: [Key architecture points from design.md]
+  - Requirements: [REQ-IDs from requirements.md]
+  - Current Task: [Task ID from tasks.md]
+  
+  Selected Variant Architecture:
+  [Paste relevant architecture details from selected variant]
+  
+  Acceptance Criteria:
+  [From tasks.md]
+  
+  Verification Targets (from CoV analysis):
+  - Performance P95: [target]
+  - Scalability: [target]
+  - Security: [requirements]
+  
+  Implementation Instructions:
+  [Specific guidance from selected variant]"
+
+## CoV Quality Gates (STRICT)
+
+Before proceeding to implementation:
+
+- [ ] 3 distinct solution variants generated (genuinely different approaches)
+- [ ] All 5 verification question sets defined (20-25 questions total)
+- [ ] All questions answered for all 3 variants independently
+- [ ] Comparative analysis matrix completed with weighted scoring
+- [ ] Optimal solution selected with documented rationale
+- [ ] ADR created in stories/<slug>/ folder
+- [ ] At least 1 CRITICAL criterion failed in rejected variants (proving rigorous evaluation)
+
+Before marking tasks complete:
+
+- [ ] Implementation matches selected variant architecture
+- [ ] All verification criteria from CoV analysis met
+- [ ] Performance meets targets from verification stage
+- [ ] Tests passing with verified coverage
+- [ ] ADR updated with implementation notes if deviations occurred
+
+## Process Flow
+
+**Step 1: Context Discovery**
+1. Parse user's feature description and story/task hints
+2. If story not specified → ask user
+3. Load story files: design.md, requirements.md, tasks.md
+
+**Step 2: CoV Analysis (Stages 1-5)**
+1. Generate 3 distinct solution variants
+2. Define verification criteria (5 question sets)
+3. Verify each variant independently (answer all questions)
+4. Create comparative analysis matrix
+5. Select optimal solution with documented rationale
+6. Create ADR in stories/<slug>/
+
+**Step 3: Development Execution**
+1. Identify required agents from selected variant
+2. Activate agents sequentially or in parallel
+3. Pass selected variant architecture in prompts
+4. Verify implementation matches variant
+
+**Step 4: Quality Assurance**
+1. Activate tech-qa agent
+2. Pass verification targets from CoV analysis
+3. Run all tests (E2E + Integration + Unit)
+4. Fix issues if tests fail
+5. Verify performance meets targets
+
+**Step 5: Progress Tracking**
+1. Activate tech-pm agent
+2. Pass ADR reference and CoV summary
+3. Mark completed tasks in tasks.md
+4. Update plan.md or move to backlog.md
+
+**Step 6: Final Report**
+1. Generate comprehensive summary
+2. Include CoV analysis results
+3. Document selected variant and rationale
+4. List rejected variants with reasons
+5. Report test results vs. verification targets
+
+## Key Principles
+
+- **Rigor over speed** - CoV takes longer but produces better solutions
+- **Independence matters** - Don't compare while verifying
+- **Document decisions** - Future developers need to understand "why"
+- **Learn from rejections** - Rejected variants inform future work
+- **Verification drives quality** - Objective criteria prevent bias
+- **Critical criteria non-negotiable** - Security/requirements failures disqualify variants
+
+## Usage Examples
+
+# Basic CoV development
+/dev:cov "Implement user authentication with OAuth2"
+
+# With story context
+/dev:cov "Add real-time document collaboration" story:collaboration task:2.1
+
+# Complex architectural decision
+/dev:cov "Design caching strategy for high-traffic endpoints" story:performance
+
+# Full-stack with multiple approaches
+/dev:cov "Build analytics dashboard with real-time updates" story:analytics
+
+## Success Criteria
+
+Chain-of-Verification development succeeds when:
+
+1. ✅ Three genuinely different solution variants generated
+2. ✅ Independent verification completed for all variants
+3. ✅ Comparative analysis shows clear winner with evidence
+4. ✅ ADR documented in story folder
+5. ✅ Implementation faithfully follows selected variant
+6. ✅ All verification targets from CoV analysis met
+7. ✅ Tests passing with verified performance
+8. ✅ Story progress updated with CoV documentation
+
+Remember: CoV adds systematic rigor to ensure optimal architectural decisions through independent verification and comparative analysis. The investment in analysis pays dividends in implementation quality and long-term maintainability.
+"""
+

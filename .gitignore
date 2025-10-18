@@ -1,0 +1,102 @@
+# Environment files with secrets (NEVER commit these!)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging
+.env.prod
+.env.production
+
+# Additional secret files
+*.pem
+*.key
+*.p12
+*.pfx
+jwt-secret.txt
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python cache and build files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.hypothesis/
+
+# Static analysis
+.mypy_cache/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Node.js (frontend)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Next.js
+.next/
+
+# Dependencies caching
+.cache/
+.parcel-cache/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker data volumes
+postgres_data/
+redis_data/
+qdrant_data/
+vault_data/
+
+# Vault secrets
+vault_secrets.json
+secrets.json
+
+# Temporary files
+*.tmp
+*.temp
+
+test-results/
+playwright-report/
+.help
+
+# OpenCode temporary files
+.opencode/.history/
+.opencode/.cache/
+
+# Review reports (generated dynamically)
+reviews/*
+!reviews/README.md
