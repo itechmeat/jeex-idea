@@ -92,7 +92,7 @@ make dev-up
 The project uses Docker Compose for a complete development stack:
 
 - **PostgreSQL 18** - Primary database (port 5220)
-- **Redis 8.2+** - Cache and queue (port 5240)
+- **Redis 6.4.0+** - Cache and queue (port 5240)
 - **Qdrant 1.15.4+** - Vector database (port 5230)
 - **FastAPI** - Backend API (port 5210)
 - **Nginx** - Reverse proxy (port 80/443)

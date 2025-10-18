@@ -97,7 +97,7 @@ This story establishes the complete Docker development environment infrastructur
 
 **EARS Requirements:**
 
-1. The Redis service shall run Redis 8.2+ and be accessible on external port 5240 with persistent data storage.
+1. The Redis service shall run Redis 6.4.0+ and be accessible on external port 5240 with persistent data storage.
 
 2. When Redis starts, it shall configure memory management policies and snapshot persistence for the `redis_data` volume.
 

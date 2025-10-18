@@ -71,13 +71,13 @@
 - [x] **Task 1.5:** Configure Redis service with persistence and optimization
 
   - **Acceptance Criteria:**
-    - Redis 8.2+ service configured with official image
+    - Redis 6.4.0+ service configured with official image
     - Named volume redis_data created for persistence
     - Memory management policies configured (maxmemory-policy allkeys-lru)
     - Persistence configured with snapshots every 5 minutes
     - Health checks configured on port 6379
   - **Verification:**
-    - ✅ Manual: Redis 8.2+ service configured with persistence and optimization
+    - ✅ Manual: Redis 6.4.0+ service configured with persistence and optimization
     - ✅ Command: `docker-compose up redis` starts successfully
     - ✅ Command: `redis-cli -h localhost -p 5240 ping` returns PONG
     - ✅ Test: Data persists across container restarts

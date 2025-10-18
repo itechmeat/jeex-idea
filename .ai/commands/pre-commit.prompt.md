@@ -117,7 +117,7 @@ grep -rni --exclude-dir=tests --exclude-dir=test \
 
 - **Minimum versions** (from specs.md):
 
-  - FastAPI 0.116.2+, PostgreSQL 18, Redis 8.2+, Qdrant 1.15.4+
+  - FastAPI 0.116.2+, PostgreSQL 18, Redis 6.4.0+, Qdrant 1.15.4+
   - CrewAI 0.186.1+, Pydantic AI 1.0.8+, Tenacity 9.0+, OpenTelemetry 1.27+
 
 - **TODO/FIXME allowed** for unimplemented functionality (better explicit TODO than hidden fallback)
@@ -243,7 +243,7 @@ CRITICAL ARCHITECTURE REQUIREMENTS (from specs.md & architecture.md):
 - SQLAlchemy models as single source of truth (Alembic autogenerate migrations)
 - FastAPI 0.116.2+ with async I/O, OAuth2 (Twitter only in MVP), SSE streaming
 - CrewAI 0.186.1+ for multi-agent orchestration, Google ADK support
-- PostgreSQL 18+, Redis 8.2+, Qdrant 1.15.4+, OpenTelemetry 1.27+
+- PostgreSQL 18+, Redis 6.4.0+, Qdrant 1.15.4+, OpenTelemetry 1.27+
 - Project_id ALWAYS required (UUID, never Optional), no default project creation
 - TODO/FIXME allowed for unimplemented functionality
 

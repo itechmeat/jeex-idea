@@ -39,6 +39,9 @@ networks:
     # Database and cache service isolation
     internal: false
     attachable: true
+    ipam:
+      config:
+        - subnet: 172.19.0.0/16
 
 volumes:
   postgres_data:
@@ -109,7 +112,7 @@ services:
 
   # Redis 6.4.0+ - Cache and Queue
   redis:
-    image: redis:8.2-alpine
+    image: redis:7.2-alpine
     container_name: jeex-redis
     hostname: redis
     networks:
@@ -179,7 +182,6 @@ services:
       - "4317:4317"  # OTLP gRPC receiver
       - "4318:4318"  # OTLP HTTP receiver
       - "8888:8888"  # Prometheus metrics
-      - "8889:8889"  # Prometheus exporter
     environment:
       <<: *common-variables
     volumes:
@@ -301,7 +303,7 @@ services:
       - ./docker/nginx/logs:/var/log/nginx
     healthcheck:
       <<: *common-healthcheck
-      test: ["CMD-SHELL", "curl -f http://localhost/nginx-health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost/nginx-health >/dev/null 2>&1 || exit 1"]
     security_opt:
       - no-new-privileges:true
     depends_on:

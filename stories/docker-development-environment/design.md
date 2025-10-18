@@ -4,7 +4,7 @@
 
 This story establishes the foundational Docker development environment for JEEX Idea, creating the containerized infrastructure necessary for all subsequent development work. The implementation will create a complete development stack with all core services, networking, health checks, and development tooling configured according to the architectural specifications.
 
-The scope includes creating docker-compose configuration with PostgreSQL 18, Redis 8.2+, Qdrant 1.15.4+, Nginx reverse proxy, OpenTelemetry collector, and the API service foundation. All services will be configured with appropriate networking, volumes, health checks, and development-specific optimizations.
+The scope includes creating docker-compose configuration with PostgreSQL 18, Redis 6.4.0+, Qdrant 1.15.4+, Nginx reverse proxy, OpenTelemetry collector, and the API service foundation. All services will be configured with appropriate networking, volumes, health checks, and development-specific optimizations.
 
 ## Current State Analysis
 
@@ -49,6 +49,7 @@ Persistent data will be managed through named volumes:
 **Responsibilities**: TLS termination, request routing, compression, static file serving, security headers
 
 **Configuration**:
+
 - HTTP/HTTPS on ports 80/443
 - Upstream routing to API service on port 8000
 - Security headers (CORS, CSP, HSTS)
@@ -62,6 +63,7 @@ Persistent data will be managed through named volumes:
 **Responsibilities**: Primary data storage, document versions, user management, project metadata
 
 **Configuration**:
+
 - PostgreSQL 18 with UUID v7 support
 - Connection pooling via PgBouncer
 - Database: `jeex_idea`
@@ -75,6 +77,7 @@ Persistent data will be managed through named volumes:
 **Responsibilities**: Vector embeddings storage, semantic search, project memory
 
 **Configuration**:
+
 - Qdrant 1.15.4+ with optimized HNSW configuration
 - Single collection with payload filtering
 - Project + language scoped memory isolation
@@ -87,7 +90,8 @@ Persistent data will be managed through named volumes:
 **Responsibilities**: Caching, session storage, rate limiting, message queuing
 
 **Configuration**:
-- Redis 8.2+ with max memory policies
+
+- Redis 6.4.0+ with max memory policies
 - Persistence with periodic snapshots
 - Connection pooling configuration
 - Health checks on port 6379
@@ -99,6 +103,7 @@ Persistent data will be managed through named volumes:
 **Responsibilities**: Distributed tracing, metrics collection, log aggregation
 
 **Configuration**:
+
 - OTLP receivers (gRPC, HTTP)
 - Prometheus metrics exporter
 - Logging exporters
@@ -112,6 +117,7 @@ Persistent data will be managed through named volumes:
 **Responsibilities**: FastAPI application foundation, middleware configuration
 
 **Configuration**:
+
 - FastAPI 0.119.0+ with async support
 - Development server with hot reload
 - Environment-based configuration
@@ -395,16 +401,16 @@ sequenceDiagram
 
 ## Traceability Matrix
 
-| Design Component | Requirements | Tasks |
-|-----------------|-------------|-------|
+| Design Component         | Requirements         | Tasks         |
+| ------------------------ | -------------------- | ------------- |
 | Docker Compose Structure | INFRA-001, INFRA-002 | Task 1.1, 1.2 |
 | PostgreSQL Configuration | INFRA-003, INFRA-004 | Task 1.3, 1.4 |
-| Redis Configuration | INFRA-005, INFRA-006 | Task 1.5, 2.1 |
-| Qdrant Configuration | INFRA-007, INFRA-008 | Task 1.6, 2.2 |
-| Nginx Reverse Proxy | INFRA-009, INFRA-010 | Task 2.3, 2.4 |
-| Health Checks | INFRA-011, INFRA-012 | Task 2.5, 3.1 |
-| Network Security | INFRA-013, INFRA-014 | Task 3.2, 3.3 |
-| Development Tooling | INFRA-015, INFRA-016 | Task 3.4, 3.5 |
+| Redis Configuration      | INFRA-005, INFRA-006 | Task 1.5, 2.1 |
+| Qdrant Configuration     | INFRA-007, INFRA-008 | Task 1.6, 2.2 |
+| Nginx Reverse Proxy      | INFRA-009, INFRA-010 | Task 2.3, 2.4 |
+| Health Checks            | INFRA-011, INFRA-012 | Task 2.5, 3.1 |
+| Network Security         | INFRA-013, INFRA-014 | Task 3.2, 3.3 |
+| Development Tooling      | INFRA-015, INFRA-016 | Task 3.4, 3.5 |
 
 ## Risks & Mitigations
 

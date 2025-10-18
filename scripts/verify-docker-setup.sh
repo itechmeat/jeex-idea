@@ -34,6 +34,54 @@ else
     echo -e "${GREEN}✅ Docker Compose is available${RESET}"
 fi
 
+# Check port checking tools availability
+PORT_CHECK_TOOL=""
+if command -v lsof &> /dev/null; then
+    PORT_CHECK_TOOL="lsof"
+    echo -e "${GREEN}✅ Port checking tool: lsof is available${RESET}"
+elif command -v netstat &> /dev/null; then
+    PORT_CHECK_TOOL="netstat"
+    echo -e "${GREEN}✅ Port checking tool: netstat is available${RESET}"
+elif command -v ss &> /dev/null; then
+    PORT_CHECK_TOOL="ss"
+    echo -e "${GREEN}✅ Port checking tool: ss is available${RESET}"
+else
+    echo -e "${RED}❌ No port checking tools available (lsof, netstat, or ss)${RESET}"
+    echo "Please install one of these tools to verify port availability"
+    echo "  - On macOS: lsof is pre-installed"
+    echo "  - On Ubuntu/Debian: sudo apt-get install net-tools or iproute2"
+    echo "  - On CentOS/RHEL: sudo yum install net-tools or iproute"
+    PORT_CHECK_AVAILABLE=false
+fi
+
+if [ -n "$PORT_CHECK_TOOL" ]; then
+    PORT_CHECK_AVAILABLE=true
+else
+    PORT_CHECK_AVAILABLE=false
+fi
+
+# Function to check if a port is in use using available tools
+check_port_in_use() {
+    local port=$1
+
+    case "$PORT_CHECK_TOOL" in
+        "lsof")
+            lsof -i :$port &>/dev/null
+            ;;
+        "netstat")
+            # netstat -an | grep ":$port " | grep -q "LISTEN\|ESTABLISHED"
+            netstat -an 2>/dev/null | grep -E ":$port\s.*LISTEN|:$port\s.*ESTABLISHED" &>/dev/null
+            ;;
+        "ss")
+            # ss -ln | grep -q ":$port "
+            ss -ln 2>/dev/null | grep -E ":$port\s" &>/dev/null
+            ;;
+        *)
+            return 2  # Tool not available
+            ;;
+    esac
+}
+
 # Check if docker-compose.yml exists
 if [ ! -f "docker-compose.yml" ]; then
     echo -e "${RED}❌ docker-compose.yml not found${RESET}"
@@ -82,20 +130,25 @@ fi
 echo ""
 echo -e "${BLUE}Checking port availability...${RESET}"
 
-PORTS=(5210 5220 5230 5240 80 443 8888)
-PORT_NAMES=("API" "PostgreSQL" "Qdrant" "Redis" "HTTP" "HTTPS" "OpenTelemetry")
+if [ "$PORT_CHECK_AVAILABLE" = false ]; then
+    echo -e "${RED}❌ Cannot check port availability - no port checking tools available${RESET}"
+    echo "Skipping port verification. Port conflicts may occur when starting services."
+else
+    PORTS=(5210 5220 5230 5240 80 443 8888)
+    PORT_NAMES=("API" "PostgreSQL" "Qdrant" "Redis" "HTTP" "HTTPS" "OpenTelemetry")
 
-for i in "${!PORTS[@]}"; do
-    PORT=${PORTS[$i]}
-    NAME=${PORT_NAMES[$i]}
+    for i in "${!PORTS[@]}"; do
+        PORT=${PORTS[$i]}
+        NAME=${PORT_NAMES[$i]}
 
-    if lsof -i :$PORT &>/dev/null; then
-        echo -e "${YELLOW}⚠️  Port $PORT ($NAME) is already in use${RESET}"
-        echo "   This may cause conflicts when starting services"
-    else
-        echo -e "${GREEN}✅ Port $PORT ($NAME) is available${RESET}"
-    fi
-done
+        if check_port_in_use $PORT; then
+            echo -e "${YELLOW}⚠️  Port $PORT ($NAME) is already in use${RESET}"
+            echo "   This may cause conflicts when starting services"
+        else
+            echo -e "${GREEN}✅ Port $PORT ($NAME) is available${RESET}"
+        fi
+    done
+fi
 
 # Check Docker configuration
 echo ""
