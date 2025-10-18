@@ -161,14 +161,122 @@ clean-setup: ## Remove all setup symlinks (use with caution)
 
 ##@ Development
 
-.PHONY: dev test lint format imports pre-commit
+.PHONY: dev dev-up dev-down dev-logs dev-shell dev-restart dev-status verify-docker
 
-dev: ## Start development environment (TODO)
-	@echo "$(YELLOW)TODO: Start development environment$(RESET)"
-	@echo "This will start Docker containers for backend services"
-	@echo "Commands to add:"
-	@echo "  - docker-compose up -d"
-	@echo "  - Health checks for all services"
+verify-docker: ## Verify Docker setup is configured correctly
+	@echo "$(GREEN)Verifying Docker development environment...$(RESET)"
+	@./scripts/verify-docker-setup.sh
+
+dev-setup: ## Setup development environment
+	@echo "$(GREEN)Setting up development environment...$(RESET)"
+	@if [ ! -f .env ]; then \
+		echo "$(YELLOW)Creating .env from template...$(RESET)"; \
+		cp .env.template .env; \
+		echo "$(YELLOW)Please edit .env file with your configuration$(RESET)"; \
+	else \
+		echo "$(GREEN).env file already exists$(RESET)"; \
+	fi
+	@echo "$(GREEN)Development environment setup complete!$(RESET)"
+
+dev-up: ## Start all development services
+	@echo "$(GREEN)Starting JEEX Idea development environment...$(RESET)"
+	@echo ""
+	@if [ ! -f .env ]; then \
+		echo "$(RED)Error: .env file not found$(RESET)"; \
+		echo "Run '$(YELLOW)make dev-setup$(RESET)' first"; \
+		exit 1; \
+	fi
+	docker-compose up --build -d
+	@echo ""
+	@echo "$(GREEN)Waiting for services to be healthy...$(RESET)"
+	@sleep 10
+	@make dev-status
+
+dev-down: ## Stop all development services
+	@echo "$(YELLOW)Stopping JEEX Idea development environment...$(RESET)"
+	docker-compose down
+	@echo "$(GREEN)All services stopped$(RESET)"
+
+dev-logs: ## Show logs from all services
+	@echo "$(GREEN)Showing logs from all services...$(RESET)"
+	docker-compose logs -f --tail=100
+
+dev-logs-service: ## Show logs from specific service (usage: make dev-logs-service SERVICE=api)
+	@if [ -z "$(SERVICE)" ]; then \
+		echo "$(RED)Error: SERVICE parameter is required$(RESET)"; \
+		echo "Usage: make dev-logs-service SERVICE=api"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Showing logs from $(SERVICE)...$(RESET)"
+	docker-compose logs -f --tail=100 $(SERVICE)
+
+dev-shell: ## Open shell in API container
+	@echo "$(GREEN)Opening shell in API container...$(RESET)"
+	docker-compose exec api bash
+
+dev-shell-service: ## Open shell in specific service (usage: make dev-shell-service SERVICE=postgres)
+	@if [ -z "$(SERVICE)" ]; then \
+		echo "$(RED)Error: SERVICE parameter is required$(RESET)"; \
+		echo "Usage: make dev-shell-service SERVICE=postgres"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Opening shell in $(SERVICE) container...$(RESET)"
+	docker-compose exec $(SERVICE) sh
+
+dev-restart: ## Restart all development services
+	@echo "$(YELLOW)Restarting JEEX Idea development environment...$(RESET)"
+	docker-compose restart
+	@sleep 5
+	@make dev-status
+
+dev-status: ## Show status of all services
+	@echo "$(GREEN)JEEX Idea Development Environment Status$(RESET)"
+	@echo "======================================"
+	@echo ""
+	docker-compose ps
+	@echo ""
+	@echo "$(GREEN)Service URLs$(RESET)"
+	@echo "============"
+	@echo "API:        http://localhost:5210"
+	@echo "API Docs:   http://localhost:5210/docs"
+	@echo "PostgreSQL: localhost:5220"
+	@echo "Qdrant:     http://localhost:5230"
+	@echo "Redis:      localhost:5240"
+	@echo "OTel:       http://localhost:8888/metrics"
+	@echo ""
+
+dev: dev-up ## Alias for dev-up
+
+##@ Database
+
+.PHONY: db-shell db-migrate db-reset db-backup
+
+db-shell: ## Open PostgreSQL shell
+	@echo "$(GREEN)Opening PostgreSQL shell...$(RESET)"
+	docker-compose exec postgres psql -U jeex_user -d jeex_idea
+
+db-migrate: ## Run database migrations
+	@echo "$(YELLOW)Database migrations will be implemented with Alembic$(RESET)"
+	@echo "This target will be updated when migrations are available"
+
+db-reset: ## Reset database (WARNING: This will delete all data)
+	@echo "$(RED)WARNING: This will delete all data in the database$(RESET)"
+	@read -p "Are you sure? [y/N] " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		echo "$(YELLOW)Resetting database...$(RESET)"; \
+		docker-compose exec postgres psql -U jeex_user -d jeex_idea -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"; \
+		docker-compose exec postgres psql -U jeex_user -d jeex_idea -c "GRANT ALL ON SCHEMA public TO jeex_user;"; \
+		echo "$(GREEN)Database reset complete$(RESET)"; \
+	else \
+		echo "$(YELLOW)Cancelled$(RESET)"; \
+	fi
+
+db-backup: ## Backup database
+	@echo "$(GREEN)Creating database backup...$(RESET)"
+	@mkdir -p backups
+	docker-compose exec postgres pg_dump -U jeex_user jeex_idea > backups/jeex-idea-backup-$$(date +%Y%m%d-%H%M%S).sql
+	@echo "$(GREEN)Backup created in backups/ directory$(RESET)"
 
 test: ## Run all tests (TODO)
 	@echo "$(YELLOW)TODO: Run comprehensive test suite$(RESET)"

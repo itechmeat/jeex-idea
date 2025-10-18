@@ -1,0 +1,27 @@
+# JEEX Idea Backend Requirements - Minimal for Docker Testing
+# Core dependencies for FastAPI application
+
+# Web framework
+fastapi==0.119.0
+uvicorn[standard]==0.38.0
+
+# Basic database drivers
+asyncpg==0.30.0
+psycopg2-binary==2.9.10
+
+# Redis client
+redis==6.4.0
+
+# HTTP client
+httpx==0.28.1
+
+# Environment management
+pydantic==2.10.5
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+
+# Qdrant client
+qdrant-client==1.12.1
+
+# Logging and structlog
+structlog==25.4.0

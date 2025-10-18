@@ -67,6 +67,48 @@ Planning team creates high-level _Implementation Plan_ with phases, tasks, accep
 - **Architecture** (planned) — approach, key decisions, components, integrations, trade-offs
 - **Implementation Plan** (planned) — phases, tasks, acceptance criteria, risks/dependencies
 
+## Development
+
+### Quick Start
+
+```bash
+# Clone and setup
+git clone <repository-url>
+cd jeex-idea
+make setup
+
+# Setup Docker development environment
+make dev-setup
+
+# Verify Docker setup
+make verify-docker
+
+# Start development environment
+make dev-up
+```
+
+### Development Environment
+
+The project uses Docker Compose for a complete development stack:
+
+- **PostgreSQL 18** - Primary database (port 5220)
+- **Redis 8.2+** - Cache and queue (port 5240)
+- **Qdrant 1.15.4+** - Vector database (port 5230)
+- **FastAPI** - Backend API (port 5210)
+- **Nginx** - Reverse proxy (port 80/443)
+- **OpenTelemetry** - Observability (port 8888)
+
+### Key Commands
+
+- `make dev-up` - Start all development services
+- `make dev-down` - Stop all services
+- `make dev-logs` - View service logs
+- `make dev-status` - Check service status
+- `make db-shell` - Access PostgreSQL shell
+- `make verify-docker` - Validate Docker setup
+
+For detailed setup instructions, see [Docker Development Environment Setup](docs/instructions/DOCKER-SETUP.md).
+
 ## What's Next
 
 - **MVP:** 4 steps with multi-agent teams, automatic language localization, basic templates, database versioning, archive download

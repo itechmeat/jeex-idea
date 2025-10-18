@@ -1,5 +1,5 @@
 ---
-name: tech-python
+name: tech-backend
 description: FastAPI expert specializing in production-grade Python backends with PostgreSQL, Redis, Qdrant, OAuth2, and strict project isolation. Use PROACTIVELY for backend development, optimization, and complex Python features.
 tools: Read, Write, Edit, Bash
 color: green
