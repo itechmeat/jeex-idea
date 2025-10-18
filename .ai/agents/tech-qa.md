@@ -320,7 +320,7 @@ When discovering unimplemented functionality during testing, proactively invoke:
 5. **Missing project_id isolation tests**
 6. Not using Page Object Model for E2E tests
 7. Tests depending on external services without mocks
-8. **Using CSS selectors instead of data-testid attributes** (CRITICAL)
+8. **Using CSS selectors or non-data-testid locators in E2E tests** (CRITICAL)
 9. **Missing language context tests** (project language isolation)
 10. **Testing OAuth2 providers other than Twitter** (MVP scope violation)
 

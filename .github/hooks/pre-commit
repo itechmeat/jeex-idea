@@ -3,7 +3,7 @@
 # Pre-commit hook for JEEX Plan project
 # Runs linting checks for both frontend and backend before allowing commit
 
-set -e
+set -euo pipefail
 
 # Colors for output
 RED='\033[0;31m'
@@ -14,8 +14,8 @@ NC='\033[0m' # No Color
 echo -e "${GREEN}🔍 Running pre-commit checks for entire project...${NC}"
 
 # Check if we're in the project root
-if [ ! -f "jeex-plan.code-workspace" ]; then
-    echo -e "${RED}❌ Please run from project root directory${NC}"
+if [ ! -f "jeex-plan.code-workspace" ] && [ ! -f "Makefile" ]; then
+    echo -e "${RED}❌ Please run from project root directory (no workspace/Makefile found)${NC}"
     exit 1
 fi
 
@@ -24,26 +24,33 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+compose() {
+    if command_exists docker-compose; then
+        docker-compose "$@"
+    elif command_exists docker; then
+        docker compose "$@"
+    else
+        echo -e "${RED}❌ Neither docker-compose nor docker compose is available${NC}"
+        exit 1
+    fi
+}
+
 # Check if required tools are available
 if ! command_exists pnpm; then
     echo -e "${RED}❌ pnpm not found. Please install pnpm first.${NC}"
     exit 1
 fi
-
-if ! command_exists docker-compose; then
-    echo -e "${RED}❌ docker-compose not found. Please install Docker first.${NC}"
-    exit 1
-fi
+# docker/compose availability is validated lazily via compose()
 
 # Check if backend is running
-if ! docker-compose ps api | grep -q "Up"; then
+if ! compose ps api 2>/dev/null | grep -q "Up"; then
     echo -e "${YELLOW}⚠️  Backend not running. Starting services...${NC}"
-    docker-compose up -d
+    compose up -d
     # Wait for services to be healthy
     echo -e "${YELLOW}  • Waiting for services to be healthy...${NC}"
     timeout=60
     while [ $timeout -gt 0 ]; do
-        if docker-compose ps api | grep -q "Up.*healthy"; then
+        if compose ps api 2>/dev/null | grep -q "Up.*healthy"; then
             echo -e "${GREEN}  ✓ Services are healthy${NC}"
             break
         fi
@@ -56,34 +63,38 @@ if ! docker-compose ps api | grep -q "Up"; then
     fi
 fi
 
-echo -e "${YELLOW}📝 Frontend checks...${NC}"
+if [ -d "frontend" ]; then
+    echo -e "${YELLOW}📝 Frontend checks...${NC}"
 
-echo -e "${YELLOW}  • Checking JavaScript/TypeScript with Biome...${NC}"
-if ! (cd frontend && pnpm run lint:js); then
-    echo -e "${RED}❌ JavaScript/TypeScript linting failed!${NC}"
-    echo -e "${YELLOW}💡 Fix errors with: ${GREEN}cd frontend && pnpm run lint:js:fix${NC}"
-    exit 1
-fi
+    echo -e "${YELLOW}  • Checking JavaScript/TypeScript with Biome...${NC}"
+    if ! (cd frontend && pnpm run lint:js); then
+        echo -e "${RED}❌ JavaScript/TypeScript linting failed!${NC}"
+        echo -e "${YELLOW}💡 Fix errors with: ${GREEN}cd frontend && pnpm run lint:js:fix${NC}"
+        exit 1
+    fi
 
-echo -e "${YELLOW}  • Checking CSS with Stylelint...${NC}"
-if ! (cd frontend && pnpm run lint:styles); then
-    echo -e "${RED}❌ CSS linting failed!${NC}"
-    echo -e "${YELLOW}💡 Fix errors with: ${GREEN}cd frontend && pnpm run lint:styles:fix${NC}"
-    exit 1
-fi
+    echo -e "${YELLOW}  • Checking CSS with Stylelint...${NC}"
+    if ! (cd frontend && pnpm run lint:styles); then
+        echo -e "${RED}❌ CSS linting failed!${NC}"
+        echo -e "${YELLOW}💡 Fix errors with: ${GREEN}cd frontend && pnpm run lint:styles:fix${NC}"
+        exit 1
+    fi
 
-echo -e "${YELLOW}  • Checking TypeScript types...${NC}"
-if ! (cd frontend && pnpm run type-check); then
-    echo -e "${RED}❌ TypeScript type checking failed!${NC}"
-    echo -e "${YELLOW}💡 Fix type errors manually and try again${NC}"
-    exit 1
-fi
+    echo -e "${YELLOW}  • Checking TypeScript types...${NC}"
+    if ! (cd frontend && pnpm run type-check); then
+        echo -e "${RED}❌ TypeScript type checking failed!${NC}"
+        echo -e "${YELLOW}💡 Fix type errors manually and try again${NC}"
+        exit 1
+    fi
 
-echo -e "${YELLOW}  • Checking code formatting...${NC}"
-if ! (cd frontend && pnpm run format:check); then
-    echo -e "${RED}❌ Code formatting issues found!${NC}"
-    echo -e "${YELLOW}💡 Fix formatting with: ${GREEN}cd frontend && pnpm run format${NC}"
-    exit 1
+    echo -e "${YELLOW}  • Checking code formatting...${NC}"
+    if ! (cd frontend && pnpm run format:check); then
+        echo -e "${RED}❌ Code formatting issues found!${NC}"
+        echo -e "${YELLOW}💡 Fix formatting with: ${GREEN}cd frontend && pnpm run format${NC}"
+        exit 1
+    fi
+else
+    echo -e "${YELLOW}ℹ️  Skipping frontend checks (frontend/ not found)${NC}"
 fi
 
 echo -e "${YELLOW}📋 Markdown checks...${NC}"
@@ -95,36 +106,41 @@ if ! npx markdownlint-cli2; then
     exit 1
 fi
 
-echo -e "${YELLOW}🗃️ SQL checks...${NC}"
+# Backend checks (optional if compose is available)
+if [ -f "docker-compose.yml" ] || [ -f "compose.yaml" ] || [ -f "compose.yml" ]; then
+    echo -e "${YELLOW}🗃️ SQL checks...${NC}"
 
-echo -e "${YELLOW}  • Checking SQL files with SQLFluff...${NC}"
-if ! docker-compose exec -T api python -m sqlfluff lint .; then
-    echo -e "${RED}❌ SQL linting failed!${NC}"
-    echo -e "${YELLOW}💡 Fix errors with: ${GREEN}make sql-fix${NC}"
-    exit 1
-fi
+    echo -e "${YELLOW}  • Checking SQL files with SQLFluff...${NC}"
+    if ! compose exec -T api python -m sqlfluff lint . 2>/dev/null; then
+        echo -e "${RED}❌ SQL linting failed!${NC}"
+        echo -e "${YELLOW}💡 Fix errors with: ${GREEN}make sql-fix${NC}"
+        exit 1
+    fi
 
-echo -e "${YELLOW}🐍 Backend checks...${NC}"
+    echo -e "${YELLOW}🐍 Backend checks...${NC}"
 
-echo -e "${YELLOW}  • Checking Python code with Ruff...${NC}"
-if ! docker-compose exec -T api ruff check app; then
-    echo -e "${RED}❌ Python linting failed!${NC}"
-    echo -e "${YELLOW}💡 Fix errors with: ${GREEN}make lint-fix${NC}"
-    exit 1
-fi
+    echo -e "${YELLOW}  • Checking Python code with Ruff...${NC}"
+    if ! compose exec -T api ruff check app 2>/dev/null; then
+        echo -e "${RED}❌ Python linting failed!${NC}"
+        echo -e "${YELLOW}💡 Fix errors with: ${GREEN}make lint-fix${NC}"
+        exit 1
+    fi
 
-echo -e "${YELLOW}  • Checking Python formatting...${NC}"
-if ! docker-compose exec -T api ruff format . --check; then
-    echo -e "${RED}❌ Python formatting issues found!${NC}"
-    echo -e "${YELLOW}💡 Fix formatting with: ${GREEN}make format${NC}"
-    exit 1
-fi
+    echo -e "${YELLOW}  • Checking Python formatting...${NC}"
+    if ! compose exec -T api ruff format . --check 2>/dev/null; then
+        echo -e "${RED}❌ Python formatting issues found!${NC}"
+        echo -e "${YELLOW}💡 Fix formatting with: ${GREEN}make format${NC}"
+        exit 1
+    fi
 
-echo -e "${YELLOW}  • Checking Python types with MyPy...${NC}"
-if ! docker-compose exec -T api python -m mypy app/; then
-    echo -e "${RED}❌ Python type checking failed!${NC}"
-    echo -e "${YELLOW}💡 Fix type errors manually and try again${NC}"
-    exit 1
+    echo -e "${YELLOW}  • Checking Python types with MyPy...${NC}"
+    if ! compose exec -T api python -m mypy app/ 2>/dev/null; then
+        echo -e "${RED}❌ Python type checking failed!${NC}"
+        echo -e "${YELLOW}💡 Fix type errors manually and try again${NC}"
+        exit 1
+    fi
+else
+    echo -e "${YELLOW}ℹ️  Skipping backend checks (no compose file found)${NC}"
 fi
 
 echo -e "${YELLOW}🐳 Docker checks...${NC}"

@@ -31,9 +31,13 @@ run_tests() {
         if [[ -f pytest.ini || -f setup.cfg || -f pyproject.toml || -f requirements.txt ]]; then
             echo "🐍 Running Python tests..."
             if command -v pytest >/dev/null 2>&1; then
-                pytest "$file_path" 2>/dev/null || echo "ℹ️ pytest failed or not configured for this file"
+                if ! pytest "$file_path"; then
+                    echo "⚠️  pytest failed for $file_path"
+                fi
             elif command -v python >/dev/null 2>&1; then
-                python -m pytest "$file_path" 2>/dev/null || echo "ℹ️ pytest module not available"
+                if ! python -m pytest "$file_path"; then
+                    echo "⚠️  pytest module execution failed for $file_path"
+                fi
             fi
         fi
     fi
