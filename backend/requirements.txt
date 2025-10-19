@@ -1,13 +1,15 @@
-# JEEX Idea Backend Requirements - Minimal for Docker Testing
-# Core dependencies for FastAPI application
+# JEEX Idea Backend Requirements - Phase 3: Optimization and Monitoring
+# Core dependencies for FastAPI application with advanced observability
 
 # Web framework
 fastapi==0.119.0
 uvicorn[standard]==0.38.0
 
-# Basic database drivers
+# Database and ORM
 asyncpg==0.30.0
 psycopg2-binary==2.9.10
+sqlalchemy==2.0.36
+alembic==1.14.0
 
 # Redis client
 redis==6.4.0
@@ -25,3 +27,51 @@ qdrant-client==1.15.1
 
 # Logging and structlog
 structlog==25.4.0
+
+# Phase 3: Optimization and Monitoring Dependencies
+
+# OpenTelemetry observability
+opentelemetry-api==1.29.0
+opentelemetry-sdk==1.29.0
+opentelemetry-instrumentation==0.50b0
+opentelemetry-instrumentation-fastapi==0.50b0
+opentelemetry-instrumentation-sqlalchemy==0.50b0
+opentelemetry-instrumentation-redis==0.50b0
+opentelemetry-exporter-otlp==1.29.0
+opentelemetry-exporter-otlp-proto-http==1.29.0
+
+# Performance monitoring and metrics
+prometheus-client==0.23.1
+psutil==7.1.0
+
+# Connection pooling and circuit breaker
+tenacity==9.0.0
+pybreaker==1.4.1
+
+# Database performance monitoring
+# Note: pg-stats packages not available, monitoring will be implemented via SQLAlchemy
+
+# Background task processing
+celery==5.4.0
+
+# Advanced async utilities
+aiofiles==25.1.0
+asyncio-mqtt==0.16.2
+
+# Health check dependencies
+aiosqlite==0.21.0
+
+# Testing dependencies (moved to requirements for performance testing)
+pytest==8.3.4
+pytest-asyncio==1.2.0
+pytest-cov==7.0.0
+pytest-mock==3.14.0
+pytest-benchmark==5.1.0
+pytest-profiling==1.7.0
+
+# Security and validation
+cryptography==46.0.3
+
+# Code formatting and linting
+ruff==0.14.1
+

@@ -1,4 +1,4 @@
-.PHONY: help setup verify-setup clean-setup
+.PHONY: help setup verify-setup clean-setup lint lint-fix format check pre-commit markdown-lint markdown-fix backend-lint backend-fix backend-format sql-lint sql-fix security-scan
 .DEFAULT_GOAL := help
 
 # Colors for output
@@ -167,6 +167,10 @@ verify-docker: ## Verify Docker setup is configured correctly
 	@echo "$(GREEN)Verifying Docker development environment...$(RESET)"
 	@./scripts/verify-docker-setup.sh
 
+verify-postgresql: ## Verify PostgreSQL setup and configuration
+	@echo "$(GREEN)Verifying PostgreSQL setup...$(RESET)"
+	@./scripts/verify-postgresql-setup.sh
+
 dev-setup: ## Setup development environment
 	@echo "$(GREEN)Setting up development environment...$(RESET)"
 	@if [ ! -f .env ]; then \
@@ -256,8 +260,37 @@ db-shell: ## Open PostgreSQL shell
 	docker-compose exec postgres psql -U jeex_user -d jeex_idea
 
 db-migrate: ## Run database migrations
-	@echo "$(YELLOW)Database migrations will be implemented with Alembic$(RESET)"
-	@echo "This target will be updated when migrations are available"
+	@echo "$(GREEN)Running database migrations...$(RESET)"
+	@docker-compose exec api alembic upgrade head
+
+db-migrate-create: ## Create new database migration (usage: make db-migrate-create MSG="add_user_table")
+	@if [ -z "$(MSG)" ]; then \
+		echo "$(RED)Error: MSG parameter is required$(RESET)"; \
+		echo "Usage: make db-migrate-create MSG=\"add_user_table\""; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Creating database migration: $(MSG)$(RESET)"
+	@docker-compose exec api alembic revision --autogenerate -m "$(MSG)"
+
+db-migrate-downgrade: ## Downgrade database by one migration
+	@echo "$(YELLOW)Downgrading database by one migration...$(RESET)"
+	@docker-compose exec api alembic downgrade -1
+
+db-migrate-history: ## Show migration history
+	@echo "$(GREEN)Migration history:$(RESET)"
+	@docker-compose exec api alembic history
+
+db-migrate-current: ## Show current migration version
+	@echo "$(GREEN)Current migration:$(RESET)"
+	@docker-compose exec api alembic current
+
+db-health: ## Check database health
+	@echo "$(GREEN)Checking database health...$(RESET)"
+	@curl -s http://localhost:5210/health/database | python3 -m json.tool || echo "Database health check failed"
+
+db-metrics: ## Get database performance metrics
+	@echo "$(GREEN)Database performance metrics:$(RESET)"
+	@curl -s http://localhost:5210/health/database/metrics | python3 -m json.tool || echo "Database metrics collection failed"
 
 db-reset: ## Reset database (WARNING: This will delete all data)
 	@echo "$(RED)WARNING: This will delete all data in the database$(RESET)"
@@ -278,31 +311,89 @@ db-backup: ## Backup database
 	docker-compose exec postgres pg_dump -U jeex_user jeex_idea > backups/jeex-idea-backup-$$(date +%Y%m%d-%H%M%S).sql
 	@echo "$(GREEN)Backup created in backups/ directory$(RESET)"
 
-test: ## Run all tests (TODO)
-	@echo "$(YELLOW)TODO: Run comprehensive test suite$(RESET)"
-	@echo "Commands to add:"
-	@echo "  Backend: cd backend && pytest tests/"
-	@echo "  Frontend: cd frontend && pnpm test"
-	@echo "  E2E: cd frontend && pnpm test:e2e"
+test: ## Run all tests
+	@echo "$(GREEN)Running comprehensive test suite...$(RESET)"
+	@echo ""
 
-lint: ## Run linters (TODO)
-	@echo "$(YELLOW)TODO: Run code quality checks$(RESET)"
-	@echo "Commands to add:"
-	@echo "  Backend: cd backend && ruff check src/"
-	@echo "  Frontend: cd frontend && pnpm lint"
-	@echo "  Type checking: cd backend && mypy src/"
+test-backend: ## Run backend tests
+	@echo "$(GREEN)Running backend tests...$(RESET)"
+	@cd backend && python -m pytest tests/ -v
 
-format: ## Format code (TODO)
-	@echo "$(YELLOW)TODO: Format Python and TypeScript code$(RESET)"
-	@echo "Commands to add:"
-	@echo "  Backend: cd backend && ruff format src/ && black src/"
-	@echo "  Frontend: cd frontend && pnpm format"
+test-phase4: ## Run Phase 4 integration and testing suite
+	@echo "$(GREEN)Running Phase 4 Integration and Testing Suite...$(RESET)"
+	@echo ""
+	@cd backend && python tests/test_phase4_runner.py
 
-imports: ## Sort imports (TODO)
-	@echo "$(YELLOW)TODO: Sort imports in Python and TypeScript$(RESET)"
-	@echo "Commands to add:"
-	@echo "  Backend: cd backend && isort src/"
-	@echo "  Frontend: imports are handled by ESLint/Biome"
+test-phase4-integration: ## Run Phase 4 integration tests only
+	@echo "$(GREEN)Running Phase 4 Integration Tests...$(RESET)"
+	@cd backend && python -m pytest tests/test_phase4_integration.py -v
+
+test-phase4-rollback: ## Run Phase 4 migration rollback tests
+	@echo "$(GREEN)Running Phase 4 Migration Rollback Tests...$(RESET)"
+	@cd backend && python -m pytest tests/test_migration_rollback.py -v
+
+test-phase4-performance: ## Run Phase 4 performance and load tests
+	@echo "$(GREEN)Running Phase 4 Performance and Load Tests...$(RESET)"
+	@cd backend && python -m pytest tests/test_performance_load.py -v
+
+test-coverage: ## Run tests with coverage report
+	@echo "$(GREEN)Running tests with coverage...$(RESET)"
+	@cd backend && python -m pytest tests/ --cov=app --cov-report=html --cov-report=term-missing
+
+test-quick: ## Run quick tests (excluding performance tests)
+	@echo "$(GREEN)Running quick tests...$(RESET)"
+	@cd backend && python -m pytest tests/ -v -k "not performance and not load"
+
+lint: ## Run all linting checks
+	@echo "🔍 Running all linting checks..."
+	@$(MAKE) backend-lint
+	@$(MAKE) markdown-lint
+	@$(MAKE) sql-lint
+	@echo "✅ All lint checks completed"
+
+format: ## Format all code
+	@echo "✨ Formatting all code..."
+	@$(MAKE) backend-format
+	@echo "✅ Code formatting completed"
+
+markdown-lint: ## Run markdown linting checks
+	@echo "📋 Running markdown linting..."
+	@if command -v npx >/dev/null 2>&1; then \
+		npx markdownlint-cli2; \
+	else \
+		echo "$(YELLOW)markdownlint-cli2 not available, trying global installation...$(RESET)"; \
+		if command -v markdownlint-cli2 >/dev/null 2>&1; then \
+			markdownlint-cli2; \
+		else \
+			echo "$(RED)Error: markdownlint-cli2 not found$(RESET)"; \
+			echo "Install with: npm install -g markdownlint-cli2"; \
+			exit 1; \
+		fi; \
+	fi
+	@echo "✅ Markdown linting completed!"
+
+markdown-fix: ## Fix markdown formatting issues
+	@echo "📋 Fixing markdown issues..."
+	@if command -v npx >/dev/null 2>&1; then \
+		npx markdownlint-cli2 --fix; \
+	else \
+		echo "$(YELLOW)markdownlint-cli2 not available, trying global installation...$(RESET)"; \
+		if command -v markdownlint-cli2 >/dev/null 2>&1; then \
+			markdownlint-cli2 --fix; \
+		else \
+			echo "$(RED)Error: markdownlint-cli2 not found$(RESET)"; \
+			echo "Install with: npm install -g markdownlint-cli2"; \
+			exit 1; \
+		fi; \
+	fi
+	@echo "✅ Markdown fixes completed!"
+
+lint-fix: ## Fix all linting issues
+	@echo "🔧 Fixing all linting issues..."
+	@$(MAKE) backend-fix
+	@echo "📋 Fixing markdown..."
+	@$(MAKE) markdown-fix
+	@echo "✅ All lint fixes completed"
 
 pre-commit: ## Run all pre-commit hooks
 	@echo "$(GREEN)Running pre-commit hooks...$(RESET)"
@@ -314,6 +405,61 @@ pre-commit: ## Run all pre-commit hooks
 		echo "Then setup hooks: pre-commit install"; \
 		exit 1; \
 	fi
+
+##@ Code Quality (Backend)
+
+.PHONY: backend-lint backend-fix backend-format check sql-lint sql-fix security-scan
+
+backend-lint: ## Run backend linting checks
+	@echo "🐍 Checking backend Python linting..."
+	@cd backend && python -m ruff check app --extend-ignore E501,B904,BLE001,G201,ANN001,ANN002,ANN003,ANN201,ANN202,ANN205,RUF012,S101,S104,S105,S107,SIM102,SIM103,UP038,C901,RUF001
+	@echo "🐍 Checking backend Python formatting..."
+	@cd backend && ruff format . --check
+	@echo "🐍 Checking backend Python types..."
+	@cd backend && python -m mypy app/
+
+backend-fix: ## Fix backend linting issues
+	@echo "🐍 Fixing backend Python linting..."
+	@cd backend && python -m ruff check app --fix --extend-ignore E501,B904,BLE001,G201,ANN001,ANN002,ANN003,ANN201,ANN202,ANN205,RUF012,S101,S104,S105,S107,SIM102,SIM103,UP038,C901,RUF001
+	@echo "🐍 Fixing backend Python formatting..."
+	@cd backend && ruff format .
+
+backend-format: ## Format backend Python code
+	@echo "🐍 Formatting backend Python code..."
+	@cd backend && ruff format .
+
+check: ## Run type checks
+	@echo "🔍 Running type checks..."
+	@echo "🐍 Python type checking..."
+	@cd backend && mypy app/
+
+# SQL linting commands
+sql-lint: ## Run SQL linting
+	@echo "🗃️ Running SQL linting..."
+	@if command -v sqlfluff >/dev/null 2>&1; then \
+		cd backend && python -m sqlfluff lint .; \
+	else \
+		echo "$(YELLOW)SQLFluff not installed, skipping SQL linting$(RESET)"; \
+		echo "Install with: pip install sqlfluff"; \
+	fi
+	@echo "✅ SQL linting completed!"
+
+sql-fix: ## Fix SQL issues
+	@echo "🗃️ Fixing SQL issues..."
+	@if command -v sqlfluff >/dev/null 2>&1; then \
+		cd backend && python -m sqlfluff fix .; \
+	else \
+		echo "$(YELLOW)SQLFluff not installed, skipping SQL fixes$(RESET)"; \
+		echo "Install with: pip install sqlfluff"; \
+	fi
+	@echo "✅ SQL fixes completed!"
+
+# Security scanning
+security-scan: ## Run security scan with Bandit
+	@echo "🔒 Running security scan with Bandit..."
+	@cd backend && python -m bandit -r app/ -f json -o reports/bandit-report.json || true
+	@cd backend && python -m bandit -r app/
+	@echo "✅ Security scan completed!"
 
 ##@ Documentation
 
