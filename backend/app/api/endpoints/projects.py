@@ -263,8 +263,8 @@ class ProjectRepository:
 
         except SQLAlchemyError as e:
             await self.session.rollback()
-            logger.error("Database error updating project", error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            logger.exception("Database error updating project", error=str(e))
+            raise HTTPException(status_code=500, detail="Database error") from e
 
     async def delete(self, project_id: UUID, user_id: UUID) -> bool:
         """Soft delete project with user access validation."""

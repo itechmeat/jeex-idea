@@ -53,7 +53,7 @@ for var in env_vars:
         raise ValueError(f"Environment variable {var} is required but not set")
     database_url = database_url.replace(f"${{{var}}}", value)
 
-    config.set_main_option("sqlalchemy.url", database_url)
+config.set_main_option("sqlalchemy.url", database_url)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

@@ -17,12 +17,16 @@ from sqlalchemy import (
     ForeignKey,
     CheckConstraint,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from typing import Optional, Dict, Any
 import uuid
 
-from ..db import Base
+
+class Base(DeclarativeBase):
+    """Canonical Base class for all database models."""
+
+    pass
 
 
 class TimestampMixin:

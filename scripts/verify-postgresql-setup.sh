@@ -126,7 +126,8 @@ test_extensions() {
     extensions=("uuid-ossp" "pg_stat_statements" "pg_trgm" "pgcrypto")
 
     for ext in "${extensions[@]}"; do
-        if exec_psql "SELECT * FROM pg_extension WHERE extname = '$ext';" | grep -q "$ext"; then
+        # Safe SQL with proper quoting to prevent injection
+        if exec_psql "SELECT * FROM pg_extension WHERE extname = \$quote_literal('$ext')\$;" | grep -q "$ext"; then
             log_success "Extension '$ext' is installed"
         else
             log_error "Extension '$ext' is not installed"
@@ -160,23 +161,23 @@ test_database_schema() {
 test_user_accounts() {
     log_info "Testing user accounts and permissions..."
 
-    # Check jeex_user using catalog query instead of \du
-    if exec_psql "SELECT 1 FROM pg_roles WHERE rolname = '$POSTGRES_USER';" >/dev/null 2>&1; then
+    # Check jeex_user using catalog query with safe quoting
+    if exec_psql "SELECT 1 FROM pg_roles WHERE rolname = \$quote_literal('$POSTGRES_USER')\$;" >/dev/null 2>&1; then
         log_success "Application user '$POSTGRES_USER' exists"
     else
         log_error "Application user '$POSTGRES_USER' not found"
         return 1
     fi
 
-    # Check jeex_admin using catalog query instead of \du
-    if exec_psql "SELECT 1 FROM pg_roles WHERE rolname = 'jeex_admin';" >/dev/null 2>&1; then
+    # Check jeex_admin using catalog query with safe quoting
+    if exec_psql "SELECT 1 FROM pg_roles WHERE rolname = \$quote_literal('jeex_admin')\$;" >/dev/null 2>&1; then
         log_success "Admin user 'jeex_admin' exists"
     else
         log_warning "Admin user 'jeex_admin' not found (may be created on first run)"
     fi
 
-    # Check jeex_readonly using catalog query instead of \du
-    if exec_psql "SELECT 1 FROM pg_roles WHERE rolname = 'jeex_readonly';" >/dev/null 2>&1; then
+    # Check jeex_readonly using catalog query with safe quoting
+    if exec_psql "SELECT 1 FROM pg_roles WHERE rolname = \$quote_literal('jeex_readonly')\$;" >/dev/null 2>&1; then
         log_success "Read-only user 'jeex_readonly' exists"
     else
         log_warning "Read-only user 'jeex_readonly' not found (may be created on first run)"

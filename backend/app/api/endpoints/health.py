@@ -5,7 +5,8 @@ Provides comprehensive health monitoring for the application and its dependencie
 Integrates with PostgreSQL health monitoring and OpenTelemetry metrics.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from typing import Dict, Any, Optional
@@ -44,6 +45,9 @@ async def health_check() -> Dict[str, Any]:
 
 @router.get("/ready")
 async def readiness_check(
+    project_id: UUID = Query(
+        ..., description="Project ID for database session scoping"
+    ),
     db: AsyncSession = Depends(get_database_session),
 ) -> Dict[str, Any]:
     """
@@ -51,7 +55,11 @@ async def readiness_check(
 
     Checks if the application is ready to serve traffic by verifying
     database connectivity and other critical dependencies.
+
+    Args:
+        project_id: Required project ID for database session scoping
     """
+    logger.info(f"Running readiness check for project: {project_id}")
     ready = True
     checks = {}
 
@@ -66,7 +74,7 @@ async def readiness_check(
         }
     except Exception as e:
         ready = False
-        logger.exception("Database readiness check failed")
+        logger.exception(f"Database readiness check failed for project {project_id}")
         checks["database"] = {"status": "unhealthy", "message": str(e)}
 
     # Check Qdrant connectivity (if configured)
@@ -116,27 +124,35 @@ async def liveness_check() -> Dict[str, Any]:
 
 
 @router.get("/database")
-async def database_health() -> Dict[str, Any]:
+async def database_health(
+    project_id: UUID = Query(
+        ..., description="Project ID for database health check (required)"
+    ),
+) -> Dict[str, Any]:
     """
     Detailed database health check.
 
     Returns comprehensive database health information including
     connection metrics, performance indicators, and status.
+
+    Args:
+        project_id: Required project ID for database health check
     """
     try:
-        health_data = await get_database_health()
+        health_data = await get_database_health(project_id)
         return health_data
     except Exception as e:
-        logger.exception("Database health check failed")
+        logger.exception(
+            f"Database health check failed for project {project_id}: {str(e)}"
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
                 "status": "error",
-                "message": "Database health check failed",
-                "error": str(e),
-                "timestamp": datetime.utcnow().isoformat(),
+                "message": f"Database health check failed: {str(e)}",
+                "project_id": str(project_id),
             },
-        )
+        ) from e
 
 
 @router.get("/database/metrics")
@@ -151,20 +167,22 @@ async def database_metrics() -> Dict[str, Any]:
         metrics = await get_database_metrics()
         return metrics
     except Exception as e:
-        logger.error(f"Database metrics collection failed: {e}")
+        logger.exception(f"Database metrics collection failed: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
                 "status": "error",
-                "message": "Database metrics collection failed",
-                "error": str(e),
+                "message": f"Database metrics collection failed: {str(e)}",
                 "timestamp": datetime.utcnow().isoformat(),
             },
-        )
+        ) from e
 
 
 @router.get("/dependencies")
 async def dependencies_check(
+    project_id: UUID = Query(
+        ..., description="Project ID for database session scoping"
+    ),
     db: AsyncSession = Depends(get_database_session),
 ) -> Dict[str, Any]:
     """
@@ -172,7 +190,11 @@ async def dependencies_check(
 
     Returns the health status of all external services and dependencies
     including database, vector store, cache, and monitoring systems.
+
+    Args:
+        project_id: Required project ID for database session scoping
     """
+    logger.info(f"Checking dependencies for project: {project_id}")
     dependency_status = {}
     overall_healthy = True
 

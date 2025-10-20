@@ -430,8 +430,8 @@ class DatabaseManager:
         except Exception as e:
             # Update circuit breaker on failures
             if isinstance(e, (asyncpg.PostgresConnectionError, ConnectionError)):
-                self.circuit_breaker._failure_count += 1
-                if self.circuit_breaker._failure_count >= self.circuit_breaker.fail_max:
+                await self.circuit_breaker.record_failure()
+                if await self.circuit_breaker.is_open():
                     self.metrics.circuit_state = CircuitState.OPEN
                     self.db_circuit_breaker_trips.inc()
 
@@ -568,6 +568,7 @@ class DatabaseManager:
                 error=str(e),
                 project_id=project_id,
                 duration_seconds=duration,
+                exc_info=True,
             )
 
             return {

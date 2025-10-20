@@ -8,7 +8,6 @@ This module provides backward-compatible API by delegating to the optimized
 DatabaseManager in core.database.
 """
 
-from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import AsyncGenerator, Dict, Any
 from uuid import UUID
@@ -21,13 +20,10 @@ from ..core.database import (
     get_database_metrics as _core_get_metrics,
 )
 
+# Re-export the canonical Base from models to maintain backward compatibility
+from ..models import Base
+
 logger = logging.getLogger(__name__)
-
-
-class Base(DeclarativeBase):
-    """Base class for all database models."""
-
-    pass
 
 
 async def init_database(project_id: UUID) -> None:
@@ -91,20 +87,17 @@ async def get_database_health(project_id: UUID) -> Dict[str, Any]:
         raise
 
 
-async def get_database_metrics(project_id: UUID) -> Dict[str, Any]:
+async def get_database_metrics() -> Dict[str, Any]:
     """
     Get database performance metrics.
-
-    Args:
-        project_id: Required project ID for project-scoped metrics
 
     Returns:
         Dict containing detailed pool metrics and circuit breaker status
     """
     try:
-        return await _core_get_metrics(project_id)
+        return await _core_get_metrics()
     except Exception as e:
-        logger.exception("Failed to get database metrics for project %s", project_id)
+        logger.exception("Failed to get database metrics")
         raise
 
 

@@ -7,7 +7,7 @@ import asyncio
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "backend"))
+sys.path.insert(0, os.path.dirname(__file__))
 
 from app.core.maintenance import (
     DatabaseMaintenance,
@@ -15,7 +15,7 @@ from app.core.maintenance import (
     MaintenanceStatus,
     MaintenanceTask,
 )
-from uuid import UUID
+from app.constants import SYSTEM_PROJECT_ID
 from datetime import datetime
 
 
@@ -49,7 +49,7 @@ async def test_concurrency_semaphore():
         end_time=None,
         duration_seconds=0,
         affected_rows=0,
-        project_id=UUID("00000000-0000-0000-0000-000000000000"),
+        project_id=SYSTEM_PROJECT_ID,
         table_name=None,
     )
 
@@ -73,7 +73,7 @@ async def test_concurrency_semaphore():
             end_time=None,
             duration_seconds=0,
             affected_rows=0,
-            project_id=UUID("00000000-0000-0000-0000-000000000000"),
+            project_id=SYSTEM_PROJECT_ID,
             table_name=None,
         )
         tasks.append(maintenance._with_semaphore(task))

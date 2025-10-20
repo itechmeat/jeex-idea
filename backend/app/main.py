@@ -62,7 +62,7 @@ async def lifespan(app: FastAPI):
         )
 
     except Exception as e:
-        logger.error("Failed to initialize application", error=str(e))
+        logger.exception("Failed to initialize application")
         raise
 
     yield
@@ -154,10 +154,8 @@ async def readiness_check(project_id: UUID = Query(..., description="Project ID"
         Comprehensive readiness status including all Phase 3 systems
     """
     try:
-        project_id_str = str(project_id)
-
         # Get comprehensive database health including Phase 3 systems
-        db_health = await optimized_database.get_comprehensive_health(project_id_str)
+        db_health = await optimized_database.get_comprehensive_health(project_id)
 
         # Determine overall system status
         overall_status = (
@@ -289,23 +287,23 @@ async def app_info():
             "enabled": True,
             "systems": {
                 "database_connection_pooling": {
-                    "pool_size": settings.database_pool_size,
-                    "max_overflow": settings.database_max_overflow,
+                    "pool_size": settings.database_pool_size(),
+                    "max_overflow": settings.database_max_overflow(),
                     "status": "optimized",
                 },
                 "performance_monitoring": {
-                    "enabled": settings.performance_monitoring_enabled,
-                    "slow_query_threshold_ms": settings.slow_query_threshold_ms,
+                    "enabled": settings.performance_monitoring_enabled(),
+                    "slow_query_threshold_ms": settings.slow_query_threshold_ms(),
                     "status": "active",
                 },
                 "backup_system": {
-                    "enabled": settings.backup_enabled,
-                    "retention_days": settings.backup_retention_days,
+                    "enabled": settings.backup_enabled(),
+                    "retention_days": settings.backup_retention_days(),
                     "status": "operational",
                 },
                 "maintenance_automation": {
-                    "auto_vacuum": settings.auto_vacuum_enabled,
-                    "auto_analyze": settings.auto_analyze_enabled,
+                    "auto_vacuum": settings.auto_vacuum_enabled(),
+                    "auto_analyze": settings.auto_analyze_enabled(),
                     "status": "active",
                 },
             },
@@ -345,7 +343,7 @@ async def test_connections(project_id: UUID = Query(..., description="Project ID
 
     try:
         # Test database connection with project isolation
-        db_health = await optimized_database.get_comprehensive_health(str(project_id))
+        db_health = await optimized_database.get_comprehensive_health(project_id)
 
         # Test connection pool efficiency
         connection_metrics = await optimized_database.get_connection_metrics()
@@ -362,13 +360,12 @@ async def test_connections(project_id: UUID = Query(..., description="Project ID
         maintenance_status = await maintenance_manager.get_maintenance_status()
 
         return {
-            "project_id": project_id_str,
+            "project_id": str(project_id),
             "timestamp": datetime.utcnow().isoformat(),
             "connection_tests": {
                 "database": {
                     "status": db_health.get("overall_status", "unknown"),
-                    "response_time_ms": db_health.get("details", {})
-                    .get("database", {})
+                    "response_time_ms": db_health.get("database", {})
                     .get("basic_health", {})
                     .get("duration_seconds", 0)
                     * 1000,
@@ -409,7 +406,7 @@ async def test_connections(project_id: UUID = Query(..., description="Project ID
             },
             "project_isolation": {
                 "enabled": True,
-                "project_id": project_id_str,
+                "project_id": str(project_id),
                 "data_scoping": "enforced",
                 "monitoring_scoped": True,
             },

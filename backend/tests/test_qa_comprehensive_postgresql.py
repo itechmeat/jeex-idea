@@ -25,6 +25,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text, func, desc
 from contextlib import asynccontextmanager
 
+from app.constants import SYSTEM_PROJECT_ID
+
 logger = structlog.get_logger()
 
 # Test Configuration
@@ -855,7 +857,7 @@ class TestSecurityRequirements:
             # Test that endpoints require proper authentication/authorization
             protected_endpoints = [
                 "/projects",
-                "/projects/00000000-0000-0000-0000-000000000000",
+                f"/projects/{SYSTEM_PROJECT_ID}",
                 "/database/metrics",
                 "/database/health",
             ]

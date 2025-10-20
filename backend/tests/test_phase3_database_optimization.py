@@ -80,13 +80,13 @@ class TestConnectionPoolOptimization:
         )
 
     @pytest.mark.asyncio
-    async def test_concurrent_connection_handling(self, test_database):
+    async def test_concurrent_connection_handling(self, test_database, test_project_id):
         """Test connection pool efficiency under concurrent load."""
         connection_times = []
 
         async def test_connection():
             start_time = time.time()
-            async with test_database.get_session() as session:
+            async with test_database.get_session(test_project_id) as session:
                 await session.execute(text("SELECT 1"))
             connection_times.append((time.time() - start_time) * 1000)
 
@@ -151,7 +151,7 @@ class TestPerformanceMonitoring:
         """Test slow query detection and monitoring."""
         # Execute a query that will be tracked
         async with test_database.get_session(test_project_id) as session:
-            await session.execute("SELECT pg_sleep(0.1)")  # 100ms delay
+            await session.execute(text("SELECT pg_sleep(0.1)"))  # 100ms delay
             await session.commit()
 
         # Verify monitoring captured the query
@@ -225,10 +225,10 @@ class TestBackupRecovery:
         )
 
     @pytest.mark.asyncio
-    async def test_backup_integrity_verification(self, test_database):
+    async def test_backup_integrity_verification(self, test_database, test_project_id):
         """Test backup integrity verification."""
         # Create a backup first
-        backup_result = await test_database.create_backup("full")
+        backup_result = await test_database.create_backup("full", test_project_id)
         backup_id = backup_result["backup_id"]
 
         # Test recovery
@@ -391,7 +391,7 @@ class TestComprehensiveTesting:
     """Test Task 3.6: Comprehensive Database Testing."""
 
     @pytest.mark.asyncio
-    async def test_performance_benchmarks(self, test_database):
+    async def test_performance_benchmarks(self, test_database, test_project_id):
         """Test performance benchmarks showing P95 < 100ms."""
         # Run quick benchmark
         query_times = []
@@ -401,8 +401,8 @@ class TestComprehensiveTesting:
         while time.time() - start_time < test_duration:
             query_start = time.time()
             try:
-                async with test_database.get_session() as session:
-                    await session.execute("SELECT 1 as benchmark")
+                async with test_database.get_session(test_project_id) as session:
+                    await session.execute(text("SELECT 1 as benchmark"))
                     await session.commit()
 
                 query_time = (time.time() - query_start) * 1000
@@ -455,9 +455,9 @@ class TestComprehensiveTesting:
         )
 
     @pytest.mark.asyncio
-    async def test_requirements_compliance(self, test_database):
+    async def test_requirements_compliance(self, test_database, test_project_id):
         """Test all Phase 3 requirements compliance."""
-        health = await test_database.get_comprehensive_health()
+        health = await test_database.get_comprehensive_health(test_project_id)
 
         # Check critical requirements
         assert health["optimizations"]["connection_pooling"]["status"] == "optimized", (

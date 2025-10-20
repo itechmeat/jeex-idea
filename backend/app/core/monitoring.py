@@ -346,7 +346,9 @@ class PerformanceMonitor:
                 connection_utilization = (
                     total_connections / 50
                 )  # Assuming max 50 connections
-                cache_hit_ratio = 0.95  # Default value since we can't calculate without blocks stats
+                cache_hit_ratio = (
+                    0.95  # Default value since we can't calculate without blocks stats
+                )
 
                 # Create stats record
                 db_stats = DatabaseStats(
@@ -652,7 +654,12 @@ class PerformanceMonitor:
                 }
 
         except Exception as e:
-            logger.error("Query performance analysis failed", error=str(e), query=query)
+            logger.error(
+                "Query performance analysis failed",
+                error=str(e),
+                query=query,
+                exc_info=True,
+            )
             return {"error": str(e), "query": query}
 
     def _generate_query_recommendations(self, plan: Dict[str, Any]) -> List[str]:
@@ -680,6 +687,97 @@ class PerformanceMonitor:
             )
 
         return recommendations
+
+    async def log_query_performance(
+        self,
+        query: str,
+        duration_ms: float,
+        project_id: Optional[UUID] = None,
+        success: bool = True,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Log query performance metrics to OpenTelemetry, Prometheus, and internal tracking.
+
+        This method is called from various parts of the codebase to record query performance.
+        It handles slow query detection, metrics recording, and appropriate logging.
+
+        Args:
+            query: Query identifier or SQL statement
+            duration_ms: Query execution duration in milliseconds
+            project_id: Optional project ID for context isolation
+            success: Whether the query executed successfully
+            metadata: Additional metadata about the query
+        """
+        try:
+            # Record duration in OpenTelemetry histogram
+            self.db_queries_duration.record(duration_ms)
+
+            # Record duration in Prometheus histogram (convert to seconds)
+            self.prom_query_duration.observe(duration_ms / 1000)
+
+            # Check if this is a slow query
+            is_slow_query = duration_ms > self.slow_query_threshold_ms
+
+            if is_slow_query:
+                # Increment slow query counters
+                self.db_slow_queries.add(1)
+                self.prom_slow_queries_total.inc()
+
+                # Record slow query details if project_id is available
+                if project_id:
+                    await self._record_slow_query(query, duration_ms, project_id)
+                else:
+                    # Create a slow query record without project context
+                    slow_query = SlowQuery(
+                        query=query[:200],
+                        duration_ms=duration_ms,
+                        timestamp=datetime.utcnow(),
+                        project_id=None,
+                        execution_count=1,
+                        mean_duration_ms=duration_ms,
+                        calls_per_second=0,
+                    )
+                    self._slow_queries.append(slow_query)
+
+            # Log the query performance with appropriate level
+            if not success:
+                logger.error(
+                    "Query failed",
+                    query=query,
+                    duration_ms=duration_ms,
+                    project_id=project_id,
+                    metadata=metadata,
+                )
+            elif is_slow_query:
+                logger.warning(
+                    "Slow query detected",
+                    query=query,
+                    duration_ms=duration_ms,
+                    project_id=project_id,
+                    threshold_ms=self.slow_query_threshold_ms,
+                    metadata=metadata,
+                )
+            else:
+                logger.info(
+                    "Query executed successfully",
+                    query=query,
+                    duration_ms=duration_ms,
+                    project_id=project_id,
+                    metadata=metadata,
+                )
+
+        except Exception as e:
+            # Log error but don't raise to avoid breaking caller execution
+            logger.error(
+                "Failed to log query performance",
+                query=query,
+                duration_ms=duration_ms,
+                project_id=project_id,
+                error=str(e),
+                metadata=metadata,
+                exc_info=True,
+            )
 
 
 # Global performance monitor instance

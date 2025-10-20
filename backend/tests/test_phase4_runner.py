@@ -34,6 +34,7 @@ class Phase4TestRunner:
     """Comprehensive test runner for Phase 4 integration."""
 
     def __init__(self):
+        self.project_root = os.path.dirname(__file__)
         self.test_results = {
             "start_time": datetime.utcnow(),
             "end_time": None,

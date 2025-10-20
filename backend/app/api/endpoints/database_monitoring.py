@@ -60,7 +60,7 @@ class BackupRequest(BaseModel):
     backup_type: str = Field(
         default="full", description="Backup type: full, incremental, differential, wal"
     )
-    project_id: Optional[str] = Field(
+    project_id: Optional[UUID] = Field(
         default=None, description="Project ID for project-scoped backup"
     )
 
@@ -121,22 +121,21 @@ class QueryAnalysisResponse(BaseModel):
 
 @router.get("/health", response_model=DatabaseHealthResponse)
 async def get_database_health(
-    project_id: Optional[UUID] = Query(
-        None, description="Project ID for project-scoped health check"
+    project_id: UUID = Query(
+        ..., description="Project ID for project-scoped health check (required)"
     ),
 ) -> DatabaseHealthResponse:
     """
     Get comprehensive database health status including all Phase 3 systems.
 
     Args:
-        project_id: Optional project ID for project-scoped health check
+        project_id: Required project ID for project-scoped health check
 
     Returns:
         Comprehensive health status with performance metrics
     """
     try:
-        project_id_str = str(project_id) if project_id else None
-        health_data = await optimized_database.get_comprehensive_health(project_id_str)
+        health_data = await optimized_database.get_comprehensive_health(project_id)
 
         return DatabaseHealthResponse(**health_data)
 
@@ -370,23 +369,22 @@ async def analyze_query_performance(
 
 @router.post("/optimization/run")
 async def run_performance_optimization(
-    project_id: Optional[UUID] = Query(
-        None, description="Project ID for project-scoped optimization"
+    project_id: UUID = Query(
+        ..., description="Project ID for project-scoped optimization (required)"
     ),
 ) -> Dict[str, Any]:
     """
     Run comprehensive performance optimization routine.
 
     Args:
-        project_id: Optional project ID for project-scoped optimization
+        project_id: Required project ID for project-scoped optimization
 
     Returns:
         Optimization results and performance improvements
     """
     try:
-        project_id_str = str(project_id) if project_id else None
         optimization_results = await optimized_database.run_performance_optimization(
-            project_id_str
+            project_id
         )
         return optimization_results
 
@@ -434,9 +432,16 @@ async def run_comprehensive_tests(
 
 
 @router.get("/testing/quick-benchmark")
-async def run_quick_performance_benchmark() -> Dict[str, Any]:
+async def run_quick_performance_benchmark(
+    project_id: UUID = Query(
+        ..., description="Project ID for project-scoped benchmark (required)"
+    ),
+) -> Dict[str, Any]:
     """
     Run quick performance benchmark to verify PERF-001 (<100ms P95).
+
+    Args:
+        project_id: Required project ID for project-scoped benchmark
 
     Returns:
         Quick benchmark results
@@ -451,7 +456,9 @@ async def run_quick_performance_benchmark() -> Dict[str, Any]:
         while (datetime.utcnow() - start_time).total_seconds() < test_duration:
             query_start = datetime.utcnow()
             try:
-                async with optimized_database.get_session() as session:
+                async with optimized_database.get_session(
+                    project_id=project_id
+                ) as session:
                     await session.execute(text("SELECT 1 as benchmark"))
                     await session.commit()
 
@@ -620,9 +627,16 @@ async def initialize_database_systems(
 
 
 @router.get("/status/overview")
-async def get_database_systems_overview() -> Dict[str, Any]:
+async def get_database_systems_overview(
+    project_id: UUID = Query(
+        ..., description="Project ID for project-scoped overview (required)"
+    ),
+) -> Dict[str, Any]:
     """
     Get overview status of all Phase 3 database systems.
+
+    Args:
+        project_id: Required project ID for project-scoped overview
 
     Returns:
         Comprehensive overview of all database optimization systems
@@ -636,7 +650,9 @@ async def get_database_systems_overview() -> Dict[str, Any]:
                 "maintenance": await maintenance_manager.get_maintenance_status(),
                 "backup": await backup_manager.get_backup_status(),
             },
-            "overall_health": await optimized_database.get_comprehensive_health(),
+            "overall_health": await optimized_database.get_comprehensive_health(
+                project_id
+            ),
             "phase_3_requirements": {
                 "connection_pool_management": {
                     "status": "implemented",

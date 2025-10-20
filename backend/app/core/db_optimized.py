@@ -27,6 +27,7 @@ from .config import get_settings
 from .database import database_manager, get_database_session
 from .monitoring import performance_monitor
 from .maintenance import maintenance_manager, MaintenanceType
+from ..constants import SYSTEM_PROJECT_ID
 from .backup import backup_manager
 
 logger = structlog.get_logger()
@@ -91,7 +92,10 @@ class OptimizedDatabase:
     async def _configure_optimal_settings(self) -> None:
         """Configure PostgreSQL for optimal performance (Task 3.5)."""
         try:
-            async with database_manager.get_session() as session:
+            # Use system project ID for database-level configuration
+            async with database_manager.get_session(
+                project_id=SYSTEM_PROJECT_ID
+            ) as session:
                 # Only per-session safe settings here; server-level GUCs should be in postgresql.conf
                 # TODO: Move server-level tuning to Docker postgres.conf or ALTER SYSTEM during container init
                 optimizations = [
@@ -504,9 +508,9 @@ class OptimizedDatabase:
 
         return recommendations
 
-    async def get_connection_metrics(self) -> Dict[str, Any]:
+    async def get_connection_metrics(self, project_id: UUID) -> Dict[str, Any]:
         """Get detailed connection pool metrics."""
-        pool_metrics = await database_manager.get_metrics()
+        pool_metrics = await database_manager.get_metrics(project_id)
         return {
             "connection_metrics": self._connection_metrics,
             "pool_metrics": pool_metrics,
@@ -540,6 +544,11 @@ class OptimizedDatabase:
         from .backup import BackupType
 
         backup_type_enum = BackupType(backup_type)
+
+        # Fail fast for unimplemented backup types
+        if backup_type_enum == BackupType.DIFFERENTIAL:
+            raise NotImplementedError("Differential backups are not implemented")
+
         backup_info = await backup_manager.create_backup(backup_type_enum, project_id)
 
         return {

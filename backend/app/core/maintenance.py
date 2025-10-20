@@ -28,6 +28,7 @@ from prometheus_client import Gauge, Histogram, Counter
 from .config import get_settings
 from .database import database_manager
 from .monitoring import performance_monitor
+from ..constants import SYSTEM_PROJECT_ID
 
 logger = structlog.get_logger()
 
@@ -153,10 +154,6 @@ def _validate_table_name(table_name: str) -> None:
             raise ValueError(f"Empty identifier part in table name: {table_name}")
         if len(part) > 63:  # Each part also must respect identifier limit
             raise ValueError(f"Identifier part too long in table name: {part}")
-
-
-# System project ID for background maintenance operations
-SYSTEM_PROJECT_ID = UUID("00000000-0000-0000-0000-000000000000")
 
 
 class MaintenanceType(Enum):
@@ -375,7 +372,9 @@ class DatabaseMaintenance:
     async def _analyze_maintenance_needs(self) -> List[Dict[str, Any]]:
         """Analyze tables for maintenance needs."""
         try:
-            async with database_manager.get_session() as session:
+            async with database_manager.get_session(
+                project_id=SYSTEM_PROJECT_ID
+            ) as session:
                 # Get table statistics
                 result = await session.execute(
                     text("""
@@ -878,7 +877,9 @@ class DatabaseMaintenance:
     async def get_database_health(self) -> Dict[str, Any]:
         """Get comprehensive database health information."""
         try:
-            async with database_manager.get_session() as session:
+            async with database_manager.get_session(
+                project_id=SYSTEM_PROJECT_ID
+            ) as session:
                 # Get database statistics
                 result = await session.execute(
                     text("""

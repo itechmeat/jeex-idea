@@ -164,8 +164,8 @@ class AgentExecutionRepository:
             raise HTTPException(status_code=400, detail="Invalid agent execution data")
         except SQLAlchemyError as e:
             await self.session.rollback()
-            logger.error("Database error creating agent execution", error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            logger.exception("Database error creating agent execution")
+            raise HTTPException(status_code=500, detail="Database error") from e
 
     async def get_by_id(
         self, execution_id: UUID, project_id: UUID, user_id: UUID
@@ -204,8 +204,8 @@ class AgentExecutionRepository:
             return execution
 
         except SQLAlchemyError as e:
-            logger.error("Database error getting agent execution", error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            logger.exception("Database error getting agent execution")
+            raise HTTPException(status_code=500, detail="Database error") from e
 
     async def get_project_executions(
         self,
@@ -267,8 +267,8 @@ class AgentExecutionRepository:
             return list(executions), total
 
         except SQLAlchemyError as e:
-            logger.error("Database error listing agent executions", error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            logger.exception("Database error listing agent executions")
+            raise HTTPException(status_code=500, detail="Database error") from e
 
     async def update(
         self,
@@ -331,8 +331,8 @@ class AgentExecutionRepository:
 
         except SQLAlchemyError as e:
             await self.session.rollback()
-            logger.error("Database error updating agent execution", error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            logger.exception("Database error updating agent execution")
+            raise HTTPException(status_code=500, detail="Database error") from e
 
     async def get_metrics(
         self, project_id: UUID, user_id: UUID, days: int = 30
@@ -434,8 +434,8 @@ class AgentExecutionRepository:
             }
 
         except SQLAlchemyError as e:
-            logger.error("Database error getting agent metrics", error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            logger.exception("Database error getting agent metrics")
+            raise HTTPException(status_code=500, detail="Database error") from e
 
 
 # API Endpoints

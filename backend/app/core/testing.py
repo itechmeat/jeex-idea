@@ -185,6 +185,9 @@ class DatabaseTestSuite:
         )
 
         try:
+            # Generate test project ID for proper isolation
+            test_project_id = uuid.uuid4()
+
             # Test 1: Connection pool configuration
             pool_metrics = await optimized_database.get_connection_metrics()
             pool_config = pool_metrics["pool_metrics"]["metrics"]
@@ -201,7 +204,7 @@ class DatabaseTestSuite:
 
             async def test_connection():
                 conn_start = time.time()
-                async with optimized_database.get_session() as session:
+                async with optimized_database.get_session(test_project_id) as session:
                     await session.execute(text("SELECT 1"))
                 connection_times.append((time.time() - conn_start) * 1000)
 
@@ -227,8 +230,8 @@ class DatabaseTestSuite:
             test_result.duration_seconds = time.time() - start_time
             test_result.details = {
                 "pool_configuration": {
-                    "pool_size": self.settings.database_pool_size,
-                    "max_overflow": self.settings.database_max_overflow,
+                    "pool_size": self.settings.database_pool_size(),
+                    "max_overflow": self.settings.database_max_overflow(),
                     "configured_correctly": True,
                 },
                 "concurrent_connections_test": {
@@ -280,6 +283,9 @@ class DatabaseTestSuite:
         )
 
         try:
+            # Generate test project ID for proper isolation
+            test_project_id = uuid.uuid4()
+
             # Test 1: Performance monitoring active
             dashboard = await performance_monitor.get_performance_dashboard()
 
@@ -289,7 +295,7 @@ class DatabaseTestSuite:
 
             # Test 2: Slow query detection
             # Execute a slow query to test detection
-            async with optimized_database.get_session() as session:
+            async with optimized_database.get_session(test_project_id) as session:
                 # Simulate a slow query (this will be fast in testing, but tests the monitoring pipeline)
                 await session.execute(text("SELECT pg_sleep(0.1)"))  # 100ms delay
                 await session.commit()
@@ -304,7 +310,7 @@ class DatabaseTestSuite:
 
             # Test 4: OpenTelemetry integration
             # Verify that OpenTelemetry is configured
-            health = await optimized_database.get_comprehensive_health()
+            health = await optimized_database.get_comprehensive_health(test_project_id)
 
             assert "monitoring" in health, (
                 "Monitoring should be integrated into health checks"
@@ -353,8 +359,12 @@ class DatabaseTestSuite:
 
         try:
             # Test 1: Create backup
-            project_id = str(uuid.uuid4())
-            backup_result = await optimized_database.create_backup("full", project_id)
+            test_project_id = uuid.uuid4()
+            from .backup import BackupType
+
+            backup_result = await backup_manager.create_backup(
+                BackupType.FULL, test_project_id
+            )
 
             assert backup_result["status"] in ["completed", "running"], (
                 "Backup should be created successfully"
@@ -379,7 +389,7 @@ class DatabaseTestSuite:
             ], "Recovery test should execute"
 
             # Test 4: WAL archiving
-            wal_enabled = self.settings.wal_archiving_enabled
+            wal_enabled = self.settings.wal_archiving_enabled()
             assert wal_enabled, "WAL archiving should be enabled"
 
             test_result.status = "passed"
@@ -387,7 +397,7 @@ class DatabaseTestSuite:
             test_result.details = {
                 "backup_creation": {
                     "backup_id": backup_id,
-                    "project_scoped": project_id is not None,
+                    "project_scoped": test_project_id is not None,
                     "successful": backup_result["status"] == "completed",
                 },
                 "backup_integrity": {
@@ -396,7 +406,7 @@ class DatabaseTestSuite:
                 },
                 "wal_archiving": {
                     "enabled": wal_enabled,
-                    "retention_days": self.settings.wal_retention_days,
+                    "retention_days": self.settings.wal_retention_days(),
                 },
                 "req_007_satisfied": True,  # Backup and Recovery
                 "rel_003_satisfied": True,  # Backup Reliability
@@ -431,6 +441,9 @@ class DatabaseTestSuite:
         )
 
         try:
+            # Generate test project ID for proper isolation
+            test_project_id = uuid.uuid4()
+
             # Test 1: Auto VACUUM and ANALYZE configuration
             maintenance_status = await maintenance_manager.get_maintenance_status()
 
@@ -444,7 +457,7 @@ class DatabaseTestSuite:
             # Test 2: Manual maintenance operations
             # Run ANALYZE operation
             analyze_task = await maintenance_manager.run_maintenance(
-                MaintenanceType.ANALYZE, project_id=str(uuid.uuid4())
+                MaintenanceType.ANALYZE, project_id=str(test_project_id)
             )
 
             assert analyze_task.status in ["completed", "running"], (
@@ -455,20 +468,21 @@ class DatabaseTestSuite:
             config = maintenance_status["configuration"]
             assert (
                 config["maintenance_window"]["start"]
-                == self.settings.maintenance_window_start
+                == self.settings.maintenance_window_start()
             )
             assert (
                 config["maintenance_window"]["end"]
-                == self.settings.maintenance_window_end
+                == self.settings.maintenance_window_end()
             )
 
             # Test 4: Threshold configurations
             thresholds = config["thresholds"]
             assert (
-                thresholds["vacuum_percent"] == self.settings.vacuum_threshold_percent
+                thresholds["vacuum_percent"] == self.settings.vacuum_threshold_percent()
             )
             assert (
-                thresholds["analyze_percent"] == self.settings.analyze_threshold_percent
+                thresholds["analyze_percent"]
+                == self.settings.analyze_threshold_percent()
             )
 
             test_result.status = "passed"
@@ -516,8 +530,11 @@ class DatabaseTestSuite:
         )
 
         try:
+            # Generate test project ID for proper isolation
+            test_project_id = uuid.uuid4()
+
             # Test 1: Configuration parameters
-            async with optimized_database.get_session() as session:
+            async with optimized_database.get_session(test_project_id) as session:
                 # Check key performance settings
                 result = await session.execute(text("SHOW shared_buffers"))
                 shared_buffers = result.scalar()
@@ -533,22 +550,22 @@ class DatabaseTestSuite:
                 assert effective_cache_size, "effective_cache_size should be configured"
 
             # Test 2: Connection limits
-            async with optimized_database.get_session() as session2:
+            async with optimized_database.get_session(test_project_id) as session2:
                 result = await session2.execute(text("SHOW max_connections"))
                 max_connections = result.scalar()
 
                 assert (
                     int(max_connections)
-                    >= self.settings.database_pool_size
-                    + self.settings.database_max_overflow
+                    >= self.settings.database_pool_size()
+                    + self.settings.database_max_overflow()
                 )
 
             # Test 3: Performance monitoring settings
-            async with optimized_database.get_session() as session3:
+            async with optimized_database.get_session(test_project_id) as session3:
                 result = await session3.execute(text("SHOW log_min_duration_statement"))
                 log_min_duration = result.scalar()
 
-                assert int(log_min_duration) == self.settings.slow_query_threshold_ms
+                assert int(log_min_duration) == self.settings.slow_query_threshold_ms()
 
             test_result.status = "passed"
             test_result.duration_seconds = time.time() - start_time
@@ -566,7 +583,7 @@ class DatabaseTestSuite:
                 "monitoring_settings": {
                     "log_min_duration_statement": log_min_duration,
                     "matches_threshold": int(log_min_duration)
-                    == self.settings.slow_query_threshold_ms,
+                    == self.settings.slow_query_threshold_ms(),
                 },
             }
 
@@ -599,6 +616,9 @@ class DatabaseTestSuite:
         )
 
         try:
+            # Generate test project ID for proper isolation
+            test_project_id = uuid.uuid4()
+
             # Performance benchmark test
             query_times = []
             errors = 0
@@ -611,7 +631,9 @@ class DatabaseTestSuite:
             while time.time() - start_benchmark < test_duration:
                 query_start = time.time()
                 try:
-                    async with optimized_database.get_session() as session:
+                    async with optimized_database.get_session(
+                        test_project_id
+                    ) as session:
                         await session.execute(text("SELECT 1 as test"))
                         await session.commit()
 
@@ -629,12 +651,34 @@ class DatabaseTestSuite:
             # Calculate performance metrics
             if query_times:
                 avg_time = statistics.mean(query_times)
-                p95_time = statistics.quantiles(query_times, n=20)[
-                    18
-                ]  # 95th percentile
-                p99_time = statistics.quantiles(query_times, n=100)[
-                    98
-                ]  # 99th percentile
+
+                # Safe quantiles calculation for small samples
+                if len(query_times) >= 20:
+                    p95_time = statistics.quantiles(query_times, n=20)[
+                        18
+                    ]  # 95th percentile
+                else:
+                    # Fallback for small samples: use index math
+                    sorted_times = sorted(query_times)
+                    p95_index = min(
+                        int(round(0.95 * (len(sorted_times) - 1))),
+                        len(sorted_times) - 1,
+                    )
+                    p95_time = sorted_times[p95_index] if sorted_times else 0
+
+                if len(query_times) >= 100:
+                    p99_time = statistics.quantiles(query_times, n=100)[
+                        98
+                    ]  # 99th percentile
+                else:
+                    # Fallback for small samples: use index math
+                    sorted_times = sorted(query_times)
+                    p99_index = min(
+                        int(round(0.99 * (len(sorted_times) - 1))),
+                        len(sorted_times) - 1,
+                    )
+                    p99_time = sorted_times[p99_index] if sorted_times else 0
+
                 actual_qps = query_count / test_duration
                 error_rate = (
                     errors / (query_count + errors) if (query_count + errors) > 0 else 0
@@ -716,9 +760,9 @@ class DatabaseTestSuite:
         )
 
         try:
-            # Test with different project IDs
-            project_1 = str(uuid.uuid4())
-            project_2 = str(uuid.uuid4())
+            # Test with different project IDs (UUID objects, not strings)
+            project_1 = uuid.uuid4()
+            project_2 = uuid.uuid4()
 
             # Test 1: Sessions are properly scoped
             async with optimized_database.get_session(project_1) as session1:
@@ -733,10 +777,10 @@ class DatabaseTestSuite:
             health1 = await optimized_database.get_comprehensive_health(project_1)
             health2 = await optimized_database.get_comprehensive_health(project_2)
 
-            assert health1["project_id"] == project_1, (
+            assert health1["project_id"] == str(project_1), (
                 "Health check should respect project ID"
             )
-            assert health2["project_id"] == project_2, (
+            assert health2["project_id"] == str(project_2), (
                 "Health check should respect project ID"
             )
 
@@ -744,8 +788,8 @@ class DatabaseTestSuite:
             test_result.duration_seconds = time.time() - start_time
             test_result.details = {
                 "project_scoping": {
-                    "project_1": project_1,
-                    "project_2": project_2,
+                    "project_1": str(project_1),
+                    "project_2": str(project_2),
                     "sessions_isolated": True,
                     "health_checks_scoped": True,
                 },

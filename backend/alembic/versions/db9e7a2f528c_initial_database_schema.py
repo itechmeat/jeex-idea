@@ -49,7 +49,6 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("email"),
     )
-    op.create_index(op.f("ix_users_email"), "users", ["email"], unique=False)
 
     # Create projects table
     op.create_table(
@@ -296,7 +295,6 @@ def upgrade() -> None:
     op.create_index(
         op.f("ix_exports_created_by"), "exports", ["created_by"], unique=False
     )
-    op.create_index(op.f("ix_exports_project"), "exports", ["project_id"], unique=False)
     op.create_index(
         op.f("ix_exports_expires"),
         "exports",
