@@ -81,17 +81,26 @@ BEGIN
         );
     END IF;
 
-    -- Get performance metrics
-    SELECT round((blks_hit::NUMERIC / (blks_hit + blks_read)) * 100, 2) INTO cache_hit_ratio
+    -- Get performance metrics (with divide-by-zero protection)
+    SELECT COALESCE(
+        round((blks_hit::NUMERIC / NULLIF(blks_hit + blks_read, 0)) * 100, 2),
+        0
+    ) INTO cache_hit_ratio
     FROM pg_stat_database
     WHERE datname = current_database();
 
-    -- Get query performance from pg_stat_statements
-    SELECT
-        count(*) INTO slow_queries_count,
-        COALESCE(round(AVG(mean_exec_time), 2), 0) INTO avg_query_time,
-        COALESCE(sum(calls), 0) INTO total_statements
-    FROM pg_stat_statements;
+    -- Get query performance from pg_stat_statements (filtering for slow queries)
+    DECLARE
+        slow_threshold NUMERIC := 1000; -- 1 second threshold for slow queries
+    BEGIN
+        SELECT
+            count(*),
+            COALESCE(round(AVG(mean_exec_time), 2), 0),
+            COALESCE(sum(calls), 0)
+        INTO slow_queries_count, avg_query_time, total_statements
+        FROM pg_stat_statements
+        WHERE mean_exec_time > slow_threshold;
+    END;
 
     -- Check cache hit ratio
     IF cache_hit_ratio < 90 THEN
@@ -228,15 +237,29 @@ BEGIN
     SELECT count(*) INTO connection_count
     FROM pg_stat_activity;
 
-    -- Basic performance check
-    SELECT round((blks_hit::NUMERIC / (blks_hit + blks_read)) * 100, 2) INTO cache_hit_ratio
+    -- Basic performance check (with divide-by-zero protection)
+    SELECT COALESCE(
+        round((blks_hit::NUMERIC / NULLIF(blks_hit + blks_read, 0)) * 100, 2),
+        0
+    ) INTO cache_hit_ratio
     FROM pg_stat_database
     WHERE datname = current_database();
 
     -- Determine health status
-    IF connection_count > 180 THEN -- 90% of 200 max connections
-        is_healthy := FALSE;
-    END IF;
+    DECLARE
+        max_connections INTEGER;
+        connection_threshold INTEGER;
+    BEGIN
+        SELECT setting::INT INTO max_connections
+        FROM pg_settings
+        WHERE name = 'max_connections';
+
+        connection_threshold := CEIL(max_connections * 0.9);
+
+        IF connection_count > connection_threshold THEN
+            is_healthy := FALSE;
+        END IF;
+    END;
 
     IF cache_hit_ratio < 80 THEN -- Poor cache performance
         is_healthy := FALSE;
@@ -251,11 +274,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Grant execution permissions to application user
-GRANT EXECUTE ON FUNCTION detailed_health_check() TO jeex_user;
-GRANT EXECUTE ON FUNCTION simple_health_check() TO jeex_user;
-GRANT EXECUTE ON FUNCTION check_database_health() TO jeex_user;
-GRANT EXECUTE ON FUNCTION get_database_metrics() TO jeex_user;
 
 -- Create monitoring view for OpenTelemetry integration
 CREATE OR REPLACE VIEW current_database_status AS
@@ -288,7 +306,10 @@ BEGIN
         ),
         'performance', jsonb_build_object(
             'cache_hit_ratio', (
-                SELECT round((blks_hit::NUMERIC / (blks_hit + blks_read)) * 100, 2)
+                SELECT COALESCE(
+                    round((blks_hit::NUMERIC / NULLIF(blks_hit + blks_read, 0)) * 100, 2),
+                    0
+                )
                 FROM pg_stat_database WHERE datname = current_database()
             )
         ),
@@ -299,6 +320,12 @@ BEGIN
     RETURN metrics;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Grant execution permissions to application user (after all function definitions)
+GRANT EXECUTE ON FUNCTION detailed_health_check() TO jeex_user;
+GRANT EXECUTE ON FUNCTION simple_health_check() TO jeex_user;
+GRANT EXECUTE ON FUNCTION check_database_health() TO jeex_user;
+GRANT EXECUTE ON FUNCTION get_database_metrics() TO jeex_user;
 
 -- Log successful setup
 \echo 'JEEX Idea PostgreSQL health monitoring functions created successfully'

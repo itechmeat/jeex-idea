@@ -10,7 +10,7 @@ Production-ready FastAPI application with Phase 3 database optimizations:
 - OpenTelemetry observability integration
 """
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -49,16 +49,14 @@ async def lifespan(app: FastAPI):
     logger.info("Starting JEEX Idea API with Phase 3 optimizations")
 
     try:
-        # Initialize database connection (Phase 4 integration)
-        await init_database()
-
         # Initialize all Phase 3 database optimization systems
+        # (includes database connection initialization via database_manager)
         await optimized_database.initialize()
 
         logger.info(
             "JEEX Idea API started successfully",
             version="0.1.0",
-            environment=settings.environment,
+            environment=settings.ENVIRONMENT,
             phase_3_optimizations=True,
             phase_4_integration=True,
         )
@@ -97,7 +95,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
-    allow_credentials=settings.cors_credentials,
+    allow_credentials=settings.CORS_CREDENTIALS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -144,37 +142,19 @@ class DetailedHealthResponse(HealthResponse):
 
 
 # Enhanced health endpoints with Phase 3 integration
-@app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """
-    Basic health check endpoint.
-
-    Returns:
-        Basic application health status with Phase 3 optimization status
-    """
-    return HealthResponse(
-        status="healthy",
-        timestamp=datetime.utcnow().isoformat(),
-        version="0.1.0",
-        hostname=socket.gethostname(),
-        environment=settings.environment,
-        phase_3_optimizations=True,
-    )
-
-
 @app.get("/ready", response_model=DetailedHealthResponse)
-async def readiness_check(project_id: Optional[UUID] = None):
+async def readiness_check(project_id: UUID = Query(..., description="Project ID")):
     """
     Detailed readiness check with Phase 3 system validation.
 
     Args:
-        project_id: Optional project ID for project-scoped readiness check
+        project_id: Required project ID for project-scoped readiness check
 
     Returns:
         Comprehensive readiness status including all Phase 3 systems
     """
     try:
-        project_id_str = str(project_id) if project_id else None
+        project_id_str = str(project_id)
 
         # Get comprehensive database health including Phase 3 systems
         db_health = await optimized_database.get_comprehensive_health(project_id_str)
@@ -215,7 +195,7 @@ async def readiness_check(project_id: Optional[UUID] = None):
             timestamp=datetime.utcnow().isoformat(),
             version="0.1.0",
             hostname=socket.gethostname(),
-            environment=settings.environment,
+            environment=settings.ENVIRONMENT,
             phase_3_optimizations=True,
             dependencies=DatabaseStatus(
                 postgresql=db_health.get("database", {})
@@ -300,7 +280,7 @@ async def app_info():
     return {
         "name": "JEEX Idea API - Phase 3 Optimized",
         "version": "0.1.0",
-        "environment": settings.environment,
+        "environment": settings.ENVIRONMENT,
         "hostname": socket.gethostname(),
         "startup_time": app.state.startup_time.isoformat(),
         "uptime_seconds": int(uptime.total_seconds()),
@@ -352,33 +332,27 @@ async def app_info():
 
 
 @app.get("/test/connections")
-async def test_connections(project_id: Optional[UUID] = None):
+async def test_connections(project_id: UUID = Query(..., description="Project ID")):
     """
     Test connections to all dependencies with project isolation.
 
     Args:
-        project_id: Optional project ID for project-scoped connection testing
+        project_id: Required project ID for project-scoped connection testing
 
     Returns:
         Connection test results for all systems with project isolation
     """
-    if not project_id:
-        raise HTTPException(
-            status_code=400, detail="project_id is required for connection testing"
-        )
 
     try:
-        project_id_str = str(project_id)
-
         # Test database connection with project isolation
-        db_health = await optimized_database.get_comprehensive_health(project_id_str)
+        db_health = await optimized_database.get_comprehensive_health(str(project_id))
 
         # Test connection pool efficiency
         connection_metrics = await optimized_database.get_connection_metrics()
 
         # Test performance monitoring system
         performance_dashboard = await performance_monitor.get_performance_dashboard(
-            project_id_str
+            project_id
         )
 
         # Test backup system
@@ -393,9 +367,10 @@ async def test_connections(project_id: Optional[UUID] = None):
             "connection_tests": {
                 "database": {
                     "status": db_health.get("overall_status", "unknown"),
-                    "response_time_ms": db_health.get("details", {}).get(
-                        "duration_seconds", 0
-                    )
+                    "response_time_ms": db_health.get("details", {})
+                    .get("database", {})
+                    .get("basic_health", {})
+                    .get("duration_seconds", 0)
                     * 1000,
                     "project_isolation": "enforced",
                 },

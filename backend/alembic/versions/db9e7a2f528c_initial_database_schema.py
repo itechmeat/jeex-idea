@@ -10,6 +10,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -20,6 +21,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Create pgcrypto extension for UUID generation
+    op.execute('CREATE EXTENSION IF NOT EXISTS "pgcrypto";')
+
     # Create users table
     op.create_table(
         "users",
@@ -28,7 +32,7 @@ def upgrade() -> None:
         ),
         sa.Column("email", sa.String(length=255), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
-        sa.Column("profile_data", sa.JSON(), nullable=False),
+        sa.Column("profile_data", postgresql.JSONB(), nullable=False),
         sa.Column("last_login_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "created_at",
@@ -54,10 +58,22 @@ def upgrade() -> None:
             "id", sa.UUID(), nullable=False, server_default=sa.text("gen_random_uuid()")
         ),
         sa.Column("name", sa.String(length=255), nullable=False),
-        sa.Column("status", sa.String(length=50), nullable=False),
-        sa.Column("current_step", sa.Integer(), nullable=False),
-        sa.Column("language", sa.String(length=10), nullable=False),
-        sa.Column("metadata", sa.JSON(), nullable=False),
+        sa.Column(
+            "status",
+            sa.String(length=50),
+            nullable=False,
+            server_default=sa.text("'draft'"),
+        ),
+        sa.Column(
+            "current_step", sa.Integer(), nullable=False, server_default=sa.text("1")
+        ),
+        sa.Column(
+            "language",
+            sa.String(length=10),
+            nullable=False,
+            server_default=sa.text("'en'"),
+        ),
+        sa.Column("metadata", postgresql.JSONB(), nullable=False),
         sa.Column("created_by", sa.UUID(), nullable=False),
         sa.Column(
             "created_at",
@@ -72,7 +88,9 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("is_deleted", sa.Boolean(), nullable=False),
+        sa.Column(
+            "is_deleted", sa.Boolean(), nullable=False, server_default=sa.text("false")
+        ),
         sa.ForeignKeyConstraint(
             ["created_by"],
             ["users.id"],
@@ -105,7 +123,7 @@ def upgrade() -> None:
         sa.Column("document_type", sa.String(length=50), nullable=False),
         sa.Column("version", sa.Integer(), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
-        sa.Column("metadata", sa.JSON(), nullable=False),
+        sa.Column("metadata", postgresql.JSONB(), nullable=False),
         sa.Column("readability_score", sa.Float(), nullable=True),
         sa.Column("grammar_score", sa.Float(), nullable=True),
         sa.Column("created_by", sa.UUID(), nullable=False),
@@ -176,8 +194,8 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("gen_random_uuid()"),
         ),
-        sa.Column("input_data", sa.JSON(), nullable=True),
-        sa.Column("output_data", sa.JSON(), nullable=True),
+        sa.Column("input_data", postgresql.JSONB(), nullable=True),
+        sa.Column("output_data", postgresql.JSONB(), nullable=True),
         sa.Column("status", sa.String(length=50), nullable=False),
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column(
@@ -215,12 +233,6 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_index(
-        op.f("ix_executions_correlation"),
-        "agent_executions",
-        ["correlation_id"],
-        unique=False,
-    )
-    op.create_index(
         op.f("ix_executions_project"),
         "agent_executions",
         ["project_id", "started_at"],
@@ -246,11 +258,18 @@ def upgrade() -> None:
             "id", sa.UUID(), nullable=False, server_default=sa.text("gen_random_uuid()")
         ),
         sa.Column("project_id", sa.UUID(), nullable=False),
-        sa.Column("status", sa.String(length=50), nullable=False),
+        sa.Column(
+            "status",
+            sa.String(length=50),
+            nullable=False,
+            server_default=sa.text("'pending'"),
+        ),
         sa.Column("file_path", sa.String(length=500), nullable=True),
-        sa.Column("manifest", sa.JSON(), nullable=False),
+        sa.Column("manifest", postgresql.JSONB(), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("download_count", sa.Integer(), nullable=False),
+        sa.Column(
+            "download_count", sa.Integer(), nullable=False, server_default=sa.text("0")
+        ),
         sa.Column("created_by", sa.UUID(), nullable=False),
         sa.Column(
             "created_at",
@@ -369,6 +388,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Drop pgcrypto extension
+    op.execute('DROP EXTENSION IF EXISTS "pgcrypto";')
+
     # Drop triggers
     op.execute("DROP TRIGGER IF EXISTS update_users_updated_at ON users")
     op.execute("DROP TRIGGER IF EXISTS update_projects_updated_at ON projects")
@@ -386,6 +408,9 @@ def downgrade() -> None:
     # Drop JSONB indexes
     op.drop_index(op.f("idx_agent_output"), table_name="agent_executions")
     op.drop_index(op.f("idx_agent_input"), table_name="agent_executions")
+    op.drop_index(
+        op.f("ix_agent_executions_correlation_id"), table_name="agent_executions"
+    )
     op.drop_index(op.f("idx_exports_metadata"), table_name="exports")
     op.drop_index(op.f("idx_documents_metadata"), table_name="document_versions")
     op.drop_index(op.f("idx_projects_metadata"), table_name="projects")

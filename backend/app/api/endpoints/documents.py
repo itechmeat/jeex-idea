@@ -18,9 +18,16 @@ from typing import List, Optional, Dict, Any
 from uuid import UUID
 from datetime import datetime
 import time
+import asyncio
 import structlog
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+)
 
-from ...db import get_database_session
+from ...core.database import get_database_session
 from ...models import DocumentVersion, Project, User
 from ...core.config import get_settings
 from ...core.monitoring import performance_monitor
@@ -52,8 +59,6 @@ class DocumentBase(BaseModel):
 class DocumentCreate(DocumentBase):
     """Schema for creating documents."""
 
-    project_id: UUID = Field(..., description="Project ID")
-    created_by: UUID = Field(..., description="User ID creating the document")
     version: int = Field(1, ge=1, description="Document version")
 
 
@@ -97,7 +102,19 @@ class DocumentRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create(self, doc_data: DocumentCreate, user_id: UUID) -> DocumentVersion:
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
+        retry=retry_if_exception_type(IntegrityError),
+        before_sleep=lambda retry_state: logger.warning(
+            "Document creation retry due to version conflict",
+            attempt=retry_state.attempt_number,
+            wait_time=retry_state.next_action.sleep,
+        ),
+    )
+    async def create(
+        self, doc_data: DocumentCreate, project_id: UUID, user_id: UUID
+    ) -> DocumentVersion:
         """Create a new document version with project isolation."""
         start_time = time.time()
 
@@ -105,7 +122,7 @@ class DocumentRepository:
             # Validate project access
             project_result = await self.session.execute(
                 select(Project).where(
-                    Project.id == doc_data.project_id,
+                    Project.id == project_id,
                     Project.created_by == user_id,
                     Project.is_deleted == False,
                 )
@@ -120,23 +137,40 @@ class DocumentRepository:
             if doc_data.version == 1:
                 last_version_result = await self.session.execute(
                     select(func.coalesce(func.max(DocumentVersion.version), 0))
-                    .where(DocumentVersion.project_id == doc_data.project_id)
+                    .where(DocumentVersion.project_id == project_id)
                     .where(DocumentVersion.document_type == doc_data.document_type)
                 )
                 next_version = (last_version_result.scalar() or 0) + 1
             else:
+                # Use specified version but check for conflicts first
+                existing_result = await self.session.execute(
+                    select(DocumentVersion).where(
+                        DocumentVersion.project_id == project_id,
+                        DocumentVersion.document_type == doc_data.document_type,
+                        DocumentVersion.version == doc_data.version,
+                    )
+                )
+                existing = existing_result.scalar_one_or_none()
+                if existing:
+                    raise IntegrityError(
+                        "Version conflict",
+                        params=None,
+                        orig=Exception(
+                            f"Document version {doc_data.version} already exists"
+                        ),
+                    )
                 next_version = doc_data.version
 
-            # Create document
+            # Enforce server-side invariants
             document = DocumentVersion(
-                project_id=doc_data.project_id,
+                project_id=project_id,
                 document_type=doc_data.document_type,
                 version=next_version,
                 content=doc_data.content,
                 meta_data=doc_data.meta_data,
                 readability_score=doc_data.readability_score,
                 grammar_score=doc_data.grammar_score,
-                created_by=doc_data.created_by,
+                created_by=user_id,  # Server-enforced user ID
             )
 
             self.session.add(document)
@@ -151,7 +185,7 @@ class DocumentRepository:
             logger.info(
                 "Document created",
                 document_id=str(document.id),
-                project_id=str(doc_data.project_id),
+                project_id=str(project_id),
                 version=next_version,
                 type=doc_data.document_type,
                 duration_ms=duration,
@@ -161,11 +195,28 @@ class DocumentRepository:
 
         except IntegrityError as e:
             await self.session.rollback()
-            raise HTTPException(status_code=400, detail="Invalid document data")
+            logger.error(
+                "Integrity error creating document",
+                error=str(e),
+                project_id=str(project_id),
+                document_type=doc_data.document_type,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=400, detail=f"Document creation failed: {str(e)}"
+            ) from e
         except SQLAlchemyError as e:
             await self.session.rollback()
-            logger.error("Database error creating document", error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            logger.error(
+                "Database error creating document",
+                error=str(e),
+                project_id=str(project_id),
+                document_type=doc_data.document_type,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500, detail="Database error during document creation"
+            ) from e
 
     async def get_by_id(
         self, document_id: UUID, project_id: UUID, user_id: UUID
@@ -204,8 +255,16 @@ class DocumentRepository:
             return document
 
         except SQLAlchemyError as e:
-            logger.error("Database error getting document", error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            logger.error(
+                "Database error getting document",
+                error=str(e),
+                document_id=str(document_id),
+                project_id=str(project_id),
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500, detail="Database error while retrieving document"
+            ) from e
 
     async def get_project_documents(
         self,
@@ -266,8 +325,18 @@ class DocumentRepository:
             return list(documents), total
 
         except SQLAlchemyError as e:
-            logger.error("Database error listing documents", error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            logger.error(
+                "Database error listing documents",
+                error=str(e),
+                project_id=str(project_id),
+                page=page,
+                per_page=per_page,
+                document_type=document_type,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500, detail="Database error while listing documents"
+            ) from e
 
     async def get_latest_version(
         self, project_id: UUID, document_type: str, user_id: UUID
@@ -309,8 +378,17 @@ class DocumentRepository:
             return document
 
         except SQLAlchemyError as e:
-            logger.error("Database error getting latest document", error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            logger.error(
+                "Database error getting latest document",
+                error=str(e),
+                project_id=str(project_id),
+                document_type=document_type,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Database error while retrieving latest document",
+            ) from e
 
     async def update(
         self,
@@ -369,8 +447,17 @@ class DocumentRepository:
 
         except SQLAlchemyError as e:
             await self.session.rollback()
-            logger.error("Database error updating document", error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            logger.error(
+                "Database error updating document",
+                error=str(e),
+                document_id=str(document_id),
+                project_id=str(project_id),
+                updated_fields=list(update_values.keys()) if update_values else [],
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500, detail="Database error while updating document"
+            ) from e
 
     async def delete(self, document_id: UUID, project_id: UUID, user_id: UUID) -> bool:
         """Delete document with access validation."""
@@ -404,8 +491,16 @@ class DocumentRepository:
 
         except SQLAlchemyError as e:
             await self.session.rollback()
-            logger.error("Database error deleting document", error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            logger.error(
+                "Database error deleting document",
+                error=str(e),
+                document_id=str(document_id),
+                project_id=str(project_id),
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500, detail="Database error while deleting document"
+            ) from e
 
 
 # API Endpoints
@@ -430,11 +525,8 @@ async def create_document(
     Returns:
         Created document data
     """
-    # Ensure project_id matches
-    doc_data.project_id = project_id
-
     repo = DocumentRepository(session)
-    document = await repo.create(doc_data, user_id)
+    document = await repo.create(doc_data, project_id, user_id)
     return DocumentRead.model_validate(document)
 
 

@@ -11,6 +11,7 @@ import structlog
 from uuid import uuid4
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
+from sqlalchemy import text
 
 logger = structlog.get_logger()
 
@@ -538,8 +539,9 @@ class TestStoryRequirementsValidation:
             for table in required_tables:
                 result = await session.execute(
                     text(
-                        f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{table}')"
-                    )
+                        "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :table_name)"
+                    ),
+                    {"table_name": table},
                 )
                 if result.scalar():
                     tables_found += 1

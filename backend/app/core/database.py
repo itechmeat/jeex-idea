@@ -25,14 +25,13 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy import text, event
-from sqlalchemy.pool import QueuePool
+from sqlalchemy.pool import AsyncAdaptedQueuePool
 from tenacity import (
     retry,
     stop_after_attempt,
     wait_exponential,
     retry_if_exception_type,
 )
-import pybreaker
 import structlog
 from prometheus_client import Gauge, Histogram, Counter
 
@@ -49,6 +48,62 @@ class CircuitState(Enum):
     HALF_OPEN = "half_open"
 
 
+class SimpleCircuitBreaker:
+    """
+    Simple circuit breaker implementation for database connections.
+
+    Features:
+    - Opens circuit after failure_threshold consecutive failures
+    - Attempts recovery after recovery_timeout seconds
+    - Thread-safe for async operations
+    """
+
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.failure_count = 0
+        self.last_failure_time: Optional[float] = None
+        self.state = CircuitState.CLOSED
+        self._lock = asyncio.Lock()
+
+    async def is_open(self) -> bool:
+        """Check if circuit is open."""
+        async with self._lock:
+            if self.state == CircuitState.OPEN:
+                # Check if recovery timeout has passed
+                if (
+                    self.last_failure_time
+                    and (time.time() - self.last_failure_time) >= self.recovery_timeout
+                ):
+                    self.state = CircuitState.HALF_OPEN
+                    logger.info("Circuit breaker entering HALF_OPEN state")
+                    return False
+                return True
+            return False
+
+    async def record_success(self):
+        """Record successful operation."""
+        async with self._lock:
+            self.failure_count = 0
+            if self.state == CircuitState.HALF_OPEN:
+                self.state = CircuitState.CLOSED
+                logger.info("Circuit breaker recovered to CLOSED state")
+
+    async def record_failure(self):
+        """Record failed operation."""
+        async with self._lock:
+            self.failure_count += 1
+            self.last_failure_time = time.time()
+
+            if self.failure_count >= self.failure_threshold:
+                self.state = CircuitState.OPEN
+                logger.error(
+                    "Circuit breaker opened",
+                    failure_count=self.failure_count,
+                    threshold=self.failure_threshold,
+                )
+
+
 @dataclass
 class DatabaseMetrics:
     """Database connection pool metrics."""
@@ -62,19 +117,6 @@ class DatabaseMetrics:
     failed_connections: int = 0
     successful_connections: int = 0
     circuit_state: CircuitState = CircuitState.CLOSED
-
-
-class DatabaseCircuitBreaker(pybreaker.CircuitBreaker):
-    """Database circuit breaker with custom failure detection."""
-
-    def __init__(self, **kwargs):
-        super().__init__(
-            fail_max=5,  # Open circuit after 5 failures
-            reset_timeout=60,  # Reset after 60 seconds
-            **kwargs,
-        )
-        self._failure_count = 0
-        self._last_failure_time = None
 
 
 class DatabaseManager:
@@ -93,7 +135,9 @@ class DatabaseManager:
         self.settings = get_settings()
         self.engine: Optional[AsyncEngine] = None
         self.session_factory: Optional[async_sessionmaker] = None
-        self.circuit_breaker = DatabaseCircuitBreaker()
+        self.circuit_breaker = SimpleCircuitBreaker(
+            failure_threshold=5, recovery_timeout=60
+        )
         self.metrics = DatabaseMetrics()
 
         # Prometheus metrics
@@ -148,27 +192,54 @@ class DatabaseManager:
         )
 
     def _setup_pool_monitoring(self) -> None:
-        """Setup connection pool event monitoring."""
+        """Setup connection pool event monitoring for sync pools only."""
+        # Note: Async pool monitoring disabled due to SQLAlchemy compatibility issues
+        # Only setup sync pool monitoring to avoid _set_asyncio errors
 
-        @event.listens_for(QueuePool, "connect")
-        def receive_connect(dbapi_connection, connection_record):
-            """Track new connections."""
-            self.metrics.successful_connections += 1
-            self.db_successful_connections.inc()
-            logger.debug("Database connection established")
+        def _setup_connect_listener(pool_class):
+            """Setup connect listener for a specific pool class."""
 
-        @event.listens_for(QueuePool, "checkout")
-        def receive_checkout(dbapi_connection, connection_record, connection_proxy):
-            """Track connection checkout."""
-            start_time = time.time()
-            connection_proxy._checkout_start = start_time
+            @event.listens_for(pool_class, "connect")
+            def receive_connect(dbapi_connection, connection_record):
+                """Track new connections."""
+                self.metrics.successful_connections += 1
+                self.db_successful_connections.inc()
+                logger.debug("Database connection established")
 
-        @event.listens_for(QueuePool, "checkin")
-        def receive_checkin(dbapi_connection, connection_record):
-            """Track connection checkin."""
-            if hasattr(dbapi_connection, "_checkout_start"):
-                wait_time = time.time() - dbapi_connection._checkout_start
-                self.metrics.connection_wait_time = wait_time
+        def _setup_checkout_listener(pool_class):
+            """Setup checkout listener for a specific pool class."""
+
+            @event.listens_for(pool_class, "checkout")
+            def receive_checkout(dbapi_connection, connection_record, connection_proxy):
+                """Track connection checkout."""
+                start_time = time.perf_counter()
+                # Store start time in connection_record.info for consistent access
+                connection_record.info["_checkout_start"] = start_time
+
+        def _setup_checkin_listener(pool_class):
+            """Setup checkin listener for a specific pool class."""
+
+            @event.listens_for(pool_class, "checkin")
+            def receive_checkin(dbapi_connection, connection_record):
+                """Track connection checkin."""
+                # Retrieve start time from connection_record.info
+                start_time = connection_record.info.get("_checkout_start")
+                if start_time is not None:
+                    wait_time = time.perf_counter() - start_time
+                    self.metrics.connection_wait_time = wait_time
+                    # Clean up the stored timestamp
+                    connection_record.info.pop("_checkout_start", None)
+
+        # Register listeners for AsyncAdaptedQueuePool
+        # Pool monitoring for async engines uses different approach
+        try:
+            _setup_connect_listener(AsyncAdaptedQueuePool)
+            _setup_checkout_listener(AsyncAdaptedQueuePool)
+            _setup_checkin_listener(AsyncAdaptedQueuePool)
+            logger.info("Async pool monitoring enabled")
+        except Exception as e:
+            logger.warning(f"Failed to setup pool monitoring: {e}")
+            # Continue without pool monitoring - non-critical feature
 
     @retry(
         stop=stop_after_attempt(3),
@@ -190,7 +261,7 @@ class DatabaseManager:
             engine = create_async_engine(
                 self.settings.database_url,
                 # Optimized pool settings for Phase 3
-                poolclass=QueuePool,
+                poolclass=AsyncAdaptedQueuePool,
                 pool_size=20,  # REQ-004: Connection Pool Management
                 max_overflow=30,  # Allow additional connections under load
                 pool_pre_ping=True,  # Validate connections before use
@@ -239,11 +310,18 @@ class DatabaseManager:
 
     async def initialize(self) -> None:
         """Initialize database connection with circuit breaker protection."""
-        try:
-            # Use circuit breaker to protect against cascade failures
-            self.engine = await self.circuit_breaker.call_async(
-                self._create_engine_with_retry
+        # Check circuit breaker state
+        if await self.circuit_breaker.is_open():
+            self.metrics.circuit_state = CircuitState.OPEN
+            self.db_circuit_breaker_trips.inc()
+            logger.error("Database circuit breaker is OPEN - database unavailable")
+            raise RuntimeError(
+                "Database temporarily unavailable - circuit breaker open"
             )
+
+        try:
+            # Create engine with retry logic
+            self.engine = await self._create_engine_with_retry()
 
             # Create session factory with optimized settings
             self.session_factory = async_sessionmaker(
@@ -257,23 +335,23 @@ class DatabaseManager:
             # Test connection and configure optimizations
             await self._test_and_configure_database()
 
+            # Record success
+            await self.circuit_breaker.record_success()
+            self.metrics.circuit_state = CircuitState.CLOSED
+
             logger.info("Database initialized successfully with optimizations")
 
-        except pybreaker.CircuitBreakerError:
-            self.metrics.circuit_state = CircuitState.OPEN
-            self.db_circuit_breaker_trips.inc()
-
-            logger.error("Database circuit breaker is OPEN - database unavailable")
-            raise RuntimeError(
-                "Database temporarily unavailable - circuit breaker open"
-            )
-
         except Exception as e:
-            self.metrics.circuit_state = CircuitState.OPEN
+            # Record failure
+            await self.circuit_breaker.record_failure()
+            self.metrics.circuit_state = self.circuit_breaker.state
             self.metrics.failed_connections += 1
 
             logger.error(
-                "Database initialization failed", error=str(e), circuit_state="OPEN", exc_info=True
+                "Database initialization failed",
+                error=str(e),
+                circuit_state=self.circuit_breaker.state.value,
+                exc_info=True,
             )
             raise
 
@@ -288,22 +366,18 @@ class DatabaseManager:
             assert result.scalar() == 1
 
             # Configure PostgreSQL optimizations for Phase 3
+            # Note: Server-level parameters (log_checkpoints, log_connections, etc.)
+            # are configured in postgresql.conf and cannot be changed at runtime
             optimizations = [
-                # Performance optimizations
+                # Performance optimizations (session-level parameters only)
                 "SET work_mem = '64MB'",  # Memory for sort operations
                 "SET maintenance_work_mem = '256MB'",  # Memory for maintenance
                 "SET effective_cache_size = '4GB'",  # Estimate of system cache
                 "SET random_page_cost = 1.1",  # For SSD storage
                 "SET effective_io_concurrency = 200",  # For SSD
-                # Monitoring and logging
+                # Monitoring and logging (session-level only)
                 "SET log_min_duration_statement = 1000",  # Log slow queries (>1s)
-                "SET log_checkpoints = on",
-                "SET log_connections = on",
-                "SET log_disconnections = on",
-                "SET log_lock_waits = on",
-                # Autovacuum tuning for project isolation
-                "SET autovacuum_vacuum_scale_factor = 0.05",
-                "SET autovacuum_analyze_scale_factor = 0.02",
+                "SET log_lock_waits = on",  # Can be set at session level
             ]
 
             for optimization in optimizations:
@@ -326,13 +400,6 @@ class DatabaseManager:
         """
         if not self.session_factory:
             raise RuntimeError("Database not initialized. Call initialize() first.")
-
-        # Check circuit breaker state
-        if self.circuit_breaker.state == pybreaker.CircuitBreaker.OPEN:
-            self.metrics.circuit_state = CircuitState.OPEN
-            raise RuntimeError(
-                "Database temporarily unavailable - circuit breaker open"
-            )
 
         start_time = time.time()
 
@@ -402,15 +469,14 @@ class DatabaseManager:
             "checked_in": pool.checkedin(),
             "checked_out": pool.checkedout(),
             "overflow": pool.overflow(),
-            "invalid": pool.invalid(),
         }
 
         # Get circuit breaker state
         circuit_state = {
             "state": self.circuit_breaker.state.value,
-            "failure_count": self.circuit_breaker._failure_count,
-            "failure_threshold": self.circuit_breaker.fail_max,
-            "reset_timeout": self.circuit_breaker.reset_timeout,
+            "failure_count": self.circuit_breaker.failure_count,
+            "failure_threshold": self.circuit_breaker.failure_threshold,
+            "recovery_timeout": self.circuit_breaker.recovery_timeout,
         }
 
         return {

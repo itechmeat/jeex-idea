@@ -13,10 +13,10 @@ import pytest
 import asyncio
 import time
 import statistics
+import structlog
 from typing import List, Dict, Any, Tuple
 from uuid import uuid4
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor
 import httpx
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -310,7 +310,7 @@ class TestPerformanceRequirements:
         user_tasks = []
 
         for i in range(num_users):
-            user_id = f"user-sim-{i}-{uuid4()}"
+            user_id = str(self.test_user_id)
             project_id = self.test_project_ids[i % len(self.test_project_ids)]
             user_tasks.append(simulate_user_session(user_id, project_id))
 
@@ -632,7 +632,7 @@ class TestPerformanceRequirements:
                         )
                         project = result.scalar_one_or_none()
                         if project:
-                            await session.delete(project)
+                            session.delete(project)
 
                 if hasattr(self, "test_user_id"):
                     result = await session.execute(
@@ -640,7 +640,7 @@ class TestPerformanceRequirements:
                     )
                     user = result.scalar_one_or_none()
                     if user:
-                        await session.delete(user)
+                        session.delete(user)
 
                 await session.commit()
                 logger.info("Performance test data cleanup completed")

@@ -1,5 +1,9 @@
-.PHONY: help setup verify-setup clean-setup lint lint-fix format check pre-commit markdown-lint markdown-fix backend-lint backend-fix backend-format sql-lint sql-fix security-scan
+.PHONY: help setup verify-setup clean-setup lint lint-fix format check pre-commit markdown-lint markdown-fix backend-lint backend-fix backend-format sql-lint sql-fix security-scan dev dev-up dev-down dev-logs dev-shell dev-shell-service dev-restart dev-status verify-docker verify-postgresql dev-setup db-shell db-migrate db-migrate-create db-migrate-downgrade db-migrate-history db-migrate-current db-health db-metrics db-reset db-backup test test-backend test-phase4 test-phase4-integration test-phase4-rollback test-phase4-performance test-coverage test-quick docs
 .DEFAULT_GOAL := help
+
+# Use bash for advanced shell features (read -p, [[ ... ]], etc.)
+SHELL := bash
+.SHELLFLAGS := -eu -o pipefail -c
 
 # Colors for output
 GREEN  := \033[0;32m
@@ -161,8 +165,6 @@ clean-setup: ## Remove all setup symlinks (use with caution)
 
 ##@ Development
 
-.PHONY: dev dev-up dev-down dev-logs dev-shell dev-restart dev-status verify-docker
-
 verify-docker: ## Verify Docker setup is configured correctly
 	@echo "$(GREEN)Verifying Docker development environment...$(RESET)"
 	@./scripts/verify-docker-setup.sh
@@ -233,6 +235,16 @@ dev-restart: ## Restart all development services
 	@sleep 5
 	@make dev-status
 
+dev-rebuild: ## Rebuild and restart all development services
+	@echo "$(YELLOW)Stopping JEEX Idea development environment...$(RESET)"
+	docker-compose down
+	@echo "$(GREEN)Rebuilding and starting all services...$(RESET)"
+	docker-compose up --build -d
+	@echo ""
+	@echo "$(GREEN)Waiting for services to be healthy...$(RESET)"
+	@sleep 10
+	@make dev-status
+
 dev-status: ## Show status of all services
 	@echo "$(GREEN)JEEX Idea Development Environment Status$(RESET)"
 	@echo "======================================"
@@ -252,8 +264,6 @@ dev-status: ## Show status of all services
 dev: dev-up ## Alias for dev-up
 
 ##@ Database
-
-.PHONY: db-shell db-migrate db-reset db-backup
 
 db-shell: ## Open PostgreSQL shell
 	@echo "$(GREEN)Opening PostgreSQL shell...$(RESET)"
@@ -286,11 +296,11 @@ db-migrate-current: ## Show current migration version
 
 db-health: ## Check database health
 	@echo "$(GREEN)Checking database health...$(RESET)"
-	@curl -s http://localhost:5210/health/database | python3 -m json.tool || echo "Database health check failed"
+	@curl -s http://localhost:5210/database | python3 -m json.tool || echo "Database health check failed"
 
 db-metrics: ## Get database performance metrics
 	@echo "$(GREEN)Database performance metrics:$(RESET)"
-	@curl -s http://localhost:5210/health/database/metrics | python3 -m json.tool || echo "Database metrics collection failed"
+	@curl -s http://localhost:5210/database/metrics | python3 -m json.tool || echo "Database metrics collection failed"
 
 db-reset: ## Reset database (WARNING: This will delete all data)
 	@echo "$(RED)WARNING: This will delete all data in the database$(RESET)"
@@ -313,7 +323,8 @@ db-backup: ## Backup database
 
 test: ## Run all tests
 	@echo "$(GREEN)Running comprehensive test suite...$(RESET)"
-	@echo ""
+	@$(MAKE) lint
+	@$(MAKE) test-backend
 
 test-backend: ## Run backend tests
 	@echo "$(GREEN)Running backend tests...$(RESET)"
@@ -408,8 +419,6 @@ pre-commit: ## Run all pre-commit hooks
 
 ##@ Code Quality (Backend)
 
-.PHONY: backend-lint backend-fix backend-format check sql-lint sql-fix security-scan
-
 backend-lint: ## Run backend linting checks
 	@echo "🐍 Checking backend Python linting..."
 	@cd backend && python -m ruff check app --extend-ignore E501,B904,BLE001,G201,ANN001,ANN002,ANN003,ANN201,ANN202,ANN205,RUF012,S101,S104,S105,S107,SIM102,SIM103,UP038,C901,RUF001
@@ -457,13 +466,11 @@ sql-fix: ## Fix SQL issues
 # Security scanning
 security-scan: ## Run security scan with Bandit
 	@echo "🔒 Running security scan with Bandit..."
-	@cd backend && python -m bandit -r app/ -f json -o reports/bandit-report.json || true
+	@cd backend && mkdir -p reports && python -m bandit -r app/ -f json -o reports/bandit-report.json || true
 	@cd backend && python -m bandit -r app/
 	@echo "✅ Security scan completed!"
 
 ##@ Documentation
-
-.PHONY: docs
 
 docs: ## Open documentation (TODO)
 	@echo "$(YELLOW)TODO: Open documentation$(RESET)"

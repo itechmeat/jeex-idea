@@ -80,26 +80,42 @@ class QATestRunner:
         logger.info("Running Functional Requirements Tests")
 
         try:
-            # Import and run functional tests
-            from test_qa_comprehensive_postgresql import TestFunctionalRequirements
+            # Run pytest via subprocess to ensure proper fixture handling
+            pytest_cmd = [
+                "python3",
+                "-m",
+                "pytest",
+                "test_qa_comprehensive_postgresql.py::TestFunctionalRequirements",
+                "-q",
+                "--maxfail=1",
+                "--tb=short",
+            ]
 
-            test_instance = TestFunctionalRequirements()
-            test_instance.setup_qa_framework()
-
-            # Run all functional requirement tests
-            await test_instance.test_req_001_postgresql_configuration()
-            await test_instance.test_req_002_database_schema_implementation()
-            await test_instance.test_req_003_migration_management()
-            await test_instance.test_req_004_connection_pooling()
-            await test_instance.test_req_005_health_monitoring()
-            await test_instance.test_req_006_data_security()
-            await test_instance.test_req_007_backup_recovery()
-            await test_instance.test_req_008_performance_optimization()
-
-            self.test_results["functional_requirements"] = (
-                test_instance.qa.requirements_coverage
+            process = await asyncio.create_subprocess_exec(
+                *pytest_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=".",
             )
-            logger.info("Functional Requirements Tests completed")
+
+            stdout, stderr = await process.communicate()
+
+            if process.returncode == 0:
+                self.test_results["functional_requirements"] = {
+                    "status": "PASSED",
+                    "summary": stdout.decode("utf-8") if stdout else "Tests passed",
+                }
+            else:
+                self.test_results["functional_requirements"] = {
+                    "status": "FAILED",
+                    "error": stderr.decode("utf-8")
+                    if stderr
+                    else "Test execution failed",
+                }
+
+            logger.info(
+                f"Functional Requirements Tests completed with status: {self.test_results['functional_requirements']['status']}"
+            )
 
         except Exception as e:
             logger.error(f"Functional Requirements Tests failed: {e}")
@@ -107,27 +123,48 @@ class QATestRunner:
                 "status": "FAILED",
                 "error": str(e),
             }
-            raise
 
     async def _run_performance_requirements_tests(self):
         """Run performance requirements validation tests."""
         logger.info("Running Performance Requirements Tests")
 
         try:
-            from test_qa_comprehensive_postgresql import TestPerformanceRequirements
+            # Run pytest via subprocess to ensure proper fixture handling
+            pytest_cmd = [
+                "python3",
+                "-m",
+                "pytest",
+                "test_qa_comprehensive_postgresql.py::TestPerformanceRequirements",
+                "-q",
+                "--maxfail=1",
+                "--tb=short",
+            ]
 
-            test_instance = TestPerformanceRequirements()
-            await test_instance.setup_performance_data()
-
-            # Run performance tests
-            await test_instance.test_perf_001_query_performance_p95()
-            await test_instance.test_perf_002_connection_pool_efficiency()
-            await test_instance.test_perf_003_concurrent_user_simulation()
-
-            self.test_results["performance_requirements"] = (
-                test_instance.performance_metrics
+            process = await asyncio.create_subprocess_exec(
+                *pytest_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=".",
             )
-            logger.info("Performance Requirements Tests completed")
+
+            stdout, stderr = await process.communicate()
+
+            if process.returncode == 0:
+                self.test_results["performance_requirements"] = {
+                    "status": "PASSED",
+                    "summary": stdout.decode("utf-8") if stdout else "Tests passed",
+                }
+            else:
+                self.test_results["performance_requirements"] = {
+                    "status": "FAILED",
+                    "error": stderr.decode("utf-8")
+                    if stderr
+                    else "Test execution failed",
+                }
+
+            logger.info(
+                f"Performance Requirements Tests completed with status: {self.test_results['performance_requirements']['status']}"
+            )
 
         except Exception as e:
             logger.error(f"Performance Requirements Tests failed: {e}")
@@ -135,24 +172,48 @@ class QATestRunner:
                 "status": "FAILED",
                 "error": str(e),
             }
-            raise
 
     async def _run_security_requirements_tests(self):
         """Run security requirements validation tests."""
         logger.info("Running Security Requirements Tests")
 
         try:
-            from test_qa_comprehensive_postgresql import TestSecurityRequirements
+            # Run pytest via subprocess to ensure proper fixture handling
+            pytest_cmd = [
+                "python3",
+                "-m",
+                "pytest",
+                "test_qa_comprehensive_postgresql.py::TestSecurityRequirements",
+                "-q",
+                "--maxfail=1",
+                "--tb=short",
+            ]
 
-            test_instance = TestSecurityRequirements()
+            process = await asyncio.create_subprocess_exec(
+                *pytest_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=".",
+            )
 
-            # Run security tests
-            await test_instance.test_sec_001_project_isolation()
-            await test_instance.test_sec_002_data_encryption()
-            await test_instance.test_sec_003_access_control()
+            stdout, stderr = await process.communicate()
 
-            self.test_results["security_requirements"] = {"status": "PASSED"}
-            logger.info("Security Requirements Tests completed")
+            if process.returncode == 0:
+                self.test_results["security_requirements"] = {
+                    "status": "PASSED",
+                    "summary": stdout.decode("utf-8") if stdout else "Tests passed",
+                }
+            else:
+                self.test_results["security_requirements"] = {
+                    "status": "FAILED",
+                    "error": stderr.decode("utf-8")
+                    if stderr
+                    else "Test execution failed",
+                }
+
+            logger.info(
+                f"Security Requirements Tests completed with status: {self.test_results['security_requirements']['status']}"
+            )
 
         except Exception as e:
             logger.error(f"Security Requirements Tests failed: {e}")
@@ -160,24 +221,48 @@ class QATestRunner:
                 "status": "FAILED",
                 "error": str(e),
             }
-            raise
 
     async def _run_reliability_requirements_tests(self):
         """Run reliability requirements validation tests."""
         logger.info("Running Reliability Requirements Tests")
 
         try:
-            from test_qa_comprehensive_postgresql import TestReliabilityRequirements
+            # Run pytest via subprocess to ensure proper fixture handling
+            pytest_cmd = [
+                "python3",
+                "-m",
+                "pytest",
+                "test_qa_comprehensive_postgresql.py::TestReliabilityRequirements",
+                "-q",
+                "--maxfail=1",
+                "--tb=short",
+            ]
 
-            test_instance = TestReliabilityRequirements()
+            process = await asyncio.create_subprocess_exec(
+                *pytest_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=".",
+            )
 
-            # Run reliability tests
-            await test_instance.test_rel_001_availability()
-            await test_instance.test_rel_002_acid_compliance()
-            await test_instance.test_rel_003_backup_integrity()
+            stdout, stderr = await process.communicate()
 
-            self.test_results["reliability_requirements"] = {"status": "PASSED"}
-            logger.info("Reliability Requirements Tests completed")
+            if process.returncode == 0:
+                self.test_results["reliability_requirements"] = {
+                    "status": "PASSED",
+                    "summary": stdout.decode("utf-8") if stdout else "Tests passed",
+                }
+            else:
+                self.test_results["reliability_requirements"] = {
+                    "status": "FAILED",
+                    "error": stderr.decode("utf-8")
+                    if stderr
+                    else "Test execution failed",
+                }
+
+            logger.info(
+                f"Reliability Requirements Tests completed with status: {self.test_results['reliability_requirements']['status']}"
+            )
 
         except Exception as e:
             logger.error(f"Reliability Requirements Tests failed: {e}")
@@ -185,53 +270,97 @@ class QATestRunner:
                 "status": "FAILED",
                 "error": str(e),
             }
-            raise
 
     async def _run_cov_validation_tests(self):
         """Run CoV decision validation tests."""
         logger.info("Running CoV Decision Validation Tests")
 
         try:
-            from test_qa_comprehensive_postgresql import TestCoVDecisionValidation
+            # Run pytest via subprocess to ensure proper fixture handling
+            pytest_cmd = [
+                "python3",
+                "-m",
+                "pytest",
+                "test_qa_comprehensive_postgresql.py::TestCoVDecisionValidation",
+                "-q",
+                "--maxfail=1",
+                "--tb=short",
+            ]
 
-            test_instance = TestCoVDecisionValidation()
+            process = await asyncio.create_subprocess_exec(
+                *pytest_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=".",
+            )
 
-            # Run CoV validation tests
-            await test_instance.test_cov_variant_a_architecture()
-            await test_instance.test_cov_performance_targets()
-            await test_instance.test_cov_technical_debt_avoidance()
+            stdout, stderr = await process.communicate()
 
-            self.test_results["cov_validation"] = {"status": "PASSED"}
-            logger.info("CoV Decision Validation Tests completed")
+            if process.returncode == 0:
+                self.test_results["cov_validation"] = {
+                    "status": "PASSED",
+                    "summary": stdout.decode("utf-8") if stdout else "Tests passed",
+                }
+            else:
+                self.test_results["cov_validation"] = {
+                    "status": "FAILED",
+                    "error": stderr.decode("utf-8")
+                    if stderr
+                    else "Test execution failed",
+                }
+
+            logger.info(
+                f"CoV Decision Validation Tests completed with status: {self.test_results['cov_validation']['status']}"
+            )
 
         except Exception as e:
             logger.error(f"CoV Decision Validation Tests failed: {e}")
-            self.test_results["cov_validation"] = {"status": "FAILED", "error": str(e)}
-            raise
+            self.test_results["cov_validation"] = {
+                "status": "FAILED",
+                "error": str(e),
+            }
 
     async def _run_model_integration_tests(self):
         """Run model integration validation tests."""
         logger.info("Running Model Integration Tests")
 
         try:
-            from test_qa_model_integration import TestModelIntegration
+            # Run pytest via subprocess to ensure proper fixture handling
+            pytest_cmd = [
+                "python3",
+                "-m",
+                "pytest",
+                "test_qa_model_integration.py::TestModelIntegration",
+                "-q",
+                "--maxfail=1",
+                "--tb=short",
+            ]
 
-            test_instance = TestModelIntegration()
-            await test_instance.setup_test_models()
+            process = await asyncio.create_subprocess_exec(
+                *pytest_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=".",
+            )
 
-            # Run model integration tests
-            await test_instance.test_user_model_integration()
-            await test_instance.test_project_model_integration()
-            await test_instance.test_document_version_model_integration()
-            await test_instance.test_agent_execution_model_integration()
-            await test_instance.test_export_model_integration()
-            await test_instance.test_model_relationships_integrity()
-            await test_instance.test_model_performance_with_indexes()
-            await test_instance.test_model_data_validation()
-            await test_instance.test_model_audit_functionality()
+            stdout, stderr = await process.communicate()
 
-            self.test_results["model_integration"] = {"status": "PASSED"}
-            logger.info("Model Integration Tests completed")
+            if process.returncode == 0:
+                self.test_results["model_integration"] = {
+                    "status": "PASSED",
+                    "summary": stdout.decode("utf-8") if stdout else "Tests passed",
+                }
+            else:
+                self.test_results["model_integration"] = {
+                    "status": "FAILED",
+                    "error": stderr.decode("utf-8")
+                    if stderr
+                    else "Test execution failed",
+                }
+
+            logger.info(
+                f"Model Integration Tests completed with status: {self.test_results['model_integration']['status']}"
+            )
 
         except Exception as e:
             logger.error(f"Model Integration Tests failed: {e}")
@@ -239,29 +368,48 @@ class QATestRunner:
                 "status": "FAILED",
                 "error": str(e),
             }
-            raise
 
     async def _run_story_validation_tests(self):
         """Run story requirements validation tests."""
         logger.info("Running Story Requirements Validation Tests")
 
         try:
-            from test_qa_story_validation import TestStoryRequirementsValidation
+            # Run pytest via subprocess to ensure proper fixture handling
+            pytest_cmd = [
+                "python3",
+                "-m",
+                "pytest",
+                "test_qa_story_validation.py::TestStoryRequirementsValidation",
+                "-q",
+                "--maxfail=1",
+                "--tb=short",
+            ]
 
-            test_instance = TestStoryRequirementsValidation()
+            process = await asyncio.create_subprocess_exec(
+                *pytest_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=".",
+            )
 
-            # Run story validation tests
-            await test_instance.test_story_phase_1_completion()
-            await test_instance.test_story_phase_2_completion()
-            await test_instance.test_story_phase_3_completion()
-            await test_instance.test_story_phase_4_completion()
-            await test_instance.test_story_variant_a_implementation()
-            await test_instance.test_story_cov_90_score_validation()
-            await test_instance.test_story_acceptance_criteria()
-            await test_instance.test_story_production_readiness()
+            stdout, stderr = await process.communicate()
 
-            self.test_results["story_validation"] = {"status": "PASSED"}
-            logger.info("Story Requirements Validation Tests completed")
+            if process.returncode == 0:
+                self.test_results["story_validation"] = {
+                    "status": "PASSED",
+                    "summary": stdout.decode("utf-8") if stdout else "Tests passed",
+                }
+            else:
+                self.test_results["story_validation"] = {
+                    "status": "FAILED",
+                    "error": stderr.decode("utf-8")
+                    if stderr
+                    else "Test execution failed",
+                }
+
+            logger.info(
+                f"Story Requirements Validation Tests completed with status: {self.test_results['story_validation']['status']}"
+            )
 
         except Exception as e:
             logger.error(f"Story Requirements Validation Tests failed: {e}")
@@ -269,23 +417,48 @@ class QATestRunner:
                 "status": "FAILED",
                 "error": str(e),
             }
-            raise
 
     async def _run_production_readiness_tests(self):
         """Run production readiness validation tests."""
         logger.info("Running Production Readiness Tests")
 
         try:
-            from test_qa_comprehensive_postgresql import TestProductionReadiness
+            # Run pytest via subprocess to ensure proper fixture handling
+            pytest_cmd = [
+                "python3",
+                "-m",
+                "pytest",
+                "test_qa_comprehensive_postgresql.py::TestProductionReadiness",
+                "-q",
+                "--maxfail=1",
+                "--tb=short",
+            ]
 
-            test_instance = TestProductionReadiness()
+            process = await asyncio.create_subprocess_exec(
+                *pytest_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=".",
+            )
 
-            # Run production readiness tests
-            await test_instance.test_production_health_checklist()
-            await test_instance.test_monitoring_integration()
+            stdout, stderr = await process.communicate()
 
-            self.test_results["production_readiness"] = {"status": "PASSED"}
-            logger.info("Production Readiness Tests completed")
+            if process.returncode == 0:
+                self.test_results["production_readiness"] = {
+                    "status": "PASSED",
+                    "summary": stdout.decode("utf-8") if stdout else "Tests passed",
+                }
+            else:
+                self.test_results["production_readiness"] = {
+                    "status": "FAILED",
+                    "error": stderr.decode("utf-8")
+                    if stderr
+                    else "Test execution failed",
+                }
+
+            logger.info(
+                f"Production Readiness Tests completed with status: {self.test_results['production_readiness']['status']}"
+            )
 
         except Exception as e:
             logger.error(f"Production Readiness Tests failed: {e}")
@@ -293,7 +466,6 @@ class QATestRunner:
                 "status": "FAILED",
                 "error": str(e),
             }
-            raise
 
     async def _generate_final_report(self):
         """Generate final comprehensive QA report."""

@@ -16,6 +16,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Dict, Any, Optional, List
 from datetime import datetime
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -91,51 +92,26 @@ class OptimizedDatabase:
         """Configure PostgreSQL for optimal performance (Task 3.5)."""
         try:
             async with database_manager.get_session() as session:
-                # Performance optimizations for Phase 3
+                # Only per-session safe settings here; server-level GUCs should be in postgresql.conf
+                # TODO: Move server-level tuning to Docker postgres.conf or ALTER SYSTEM during container init
                 optimizations = [
-                    # Memory settings for connection pooling
-                    "SET shared_buffers = '256MB'",  # 25% of RAM
-                    "SET effective_cache_size = '4GB'",  # 75% of RAM
+                    # Query planner optimizations (session-safe)
                     "SET work_mem = '64MB'",  # For complex queries
-                    "SET maintenance_work_mem = '256MB'",  # For maintenance
-                    # Connection and performance settings
-                    "SET max_connections = 200",  # Pool size + overflow + safety margin
-                    "SET superuser_reserved_connections = 3",
-                    "SET max_prepared_transactions = 0",  # Not used
-                    # WAL and checkpoint settings for reliability
-                    "SET wal_buffers = '16MB'",
-                    "SET checkpoint_completion_target = 0.9",
-                    "SET wal_writer_delay = '200ms'",
-                    "SET commit_delay = '0'",
-                    "SET commit_siblings = 5",
-                    # Query planner optimizations
+                    "SET maintenance_work_mem = '256MB'",  # For maintenance operations
                     "SET random_page_cost = 1.1",  # SSD optimized
                     "SET effective_io_concurrency = 200",  # SSD concurrent I/O
                     "SET seq_page_cost = 1.0",
-                    # Autovacuum tuning for project isolation
-                    "SET autovacuum = on",
-                    "SET autovacuum_vacuum_scale_factor = 0.1",
-                    "SET autovacuum_analyze_scale_factor = 0.05",
-                    "SET autovacuum_vacuum_cost_delay = '10ms'",
-                    "SET autovacuum_vacuum_cost_limit = 200",
-                    "SET autovacuum_naptime = '1min'",
-                    # Logging for monitoring
+                    # Session timeouts and limits
+                    "SET lock_timeout = '30s'",
+                    "SET statement_timeout = '30000ms'",  # 30 seconds
+                    "SET idle_in_transaction_session_timeout = '10min'",
+                    "SET deadlock_timeout = '1s'",
+                    # Logging and monitoring (session-safe)
                     "SET log_min_duration_statement = 1000",  # Log slow queries (>1s)
-                    "SET log_checkpoints = on",
-                    "SET log_connections = on",
-                    "SET log_disconnections = on",
-                    "SET log_lock_waits = on",
-                    "SET log_temp_files = '10MB'",
-                    # Statement logging for performance analysis
                     "SET track_activities = on",
                     "SET track_counts = on",
                     "SET track_io_timing = on",
                     "SET track_functions = pl",
-                    # Lock monitoring
-                    "SET deadlock_timeout = '1s'",
-                    "SET lock_timeout = '30s'",
-                    "SET statement_timeout = '30000ms'",  # 30 seconds
-                    "SET idle_in_transaction_session_timeout = '10min'",
                 ]
 
                 for optimization in optimizations:
@@ -152,14 +128,12 @@ class OptimizedDatabase:
             raise
 
     @asynccontextmanager
-    async def get_session(
-        self, project_id: Optional[str] = None
-    ) -> AsyncGenerator[AsyncSession, None]:
+    async def get_session(self, project_id: UUID) -> AsyncGenerator[AsyncSession, None]:
         """
         Get optimized database session with comprehensive monitoring.
 
         Args:
-            project_id: Optional project ID for isolation and monitoring
+            project_id: Project ID for isolation and monitoring (required)
 
         Yields:
             AsyncSession: Database session with full optimization stack
@@ -167,8 +141,7 @@ class OptimizedDatabase:
         start_time = asyncio.get_event_loop().time()
 
         with self.tracer.start_as_current_span("database.session") as span:
-            if project_id:
-                span.set_attribute("jeex.project_id", project_id)
+            span.set_attribute("jeex.project_id", str(project_id))
 
             try:
                 async with database_manager.get_session(project_id) as session:
@@ -207,16 +180,16 @@ class OptimizedDatabase:
     async def execute_with_monitoring(
         self,
         query: str,
-        params: Dict[str, Any] = None,
-        project_id: Optional[str] = None,
+        project_id: UUID,
+        params: Dict[str, Any] | None = None,
     ) -> Any:
         """
         Execute query with comprehensive monitoring and optimization.
 
         Args:
             query: SQL query to execute
+            project_id: Project ID for scoping (required)
             params: Query parameters
-            project_id: Optional project ID for scoping
 
         Returns:
             Query execution result
@@ -231,14 +204,12 @@ class OptimizedDatabase:
                 await session.commit()
                 return result
 
-    async def get_comprehensive_health(
-        self, project_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    async def get_comprehensive_health(self, project_id: UUID) -> Dict[str, Any]:
         """
         Get comprehensive database health including all Phase 3 systems.
 
         Args:
-            project_id: Optional project ID for project-scoped health check
+            project_id: Project ID for project-scoped health check
 
         Returns:
             Comprehensive health status including performance, maintenance, and backup status
@@ -386,14 +357,12 @@ class OptimizedDatabase:
             else "needs_attention",
         }
 
-    async def run_performance_optimization(
-        self, project_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    async def run_performance_optimization(self, project_id: UUID) -> Dict[str, Any]:
         """
         Run comprehensive performance optimization routine.
 
         Args:
-            project_id: Optional project ID for project-scoped optimization
+            project_id: Project ID for project-scoped optimization
 
         Returns:
             Optimization results and recommendations
@@ -492,7 +461,7 @@ class OptimizedDatabase:
         return optimization_results
 
     async def _generate_performance_recommendations(
-        self, database_health: Dict, project_id: Optional[str]
+        self, database_health: Dict, project_id: UUID
     ) -> List[str]:
         """Generate performance optimization recommendations."""
         recommendations = []
@@ -556,14 +525,14 @@ class OptimizedDatabase:
         }
 
     async def create_backup(
-        self, backup_type: str = "full", project_id: Optional[str] = None
+        self, project_id: UUID, backup_type: str = "full"
     ) -> Dict[str, Any]:
         """
         Create a database backup with all optimizations.
 
         Args:
+            project_id: Project ID for project-scoped backup
             backup_type: Type of backup (full, incremental, differential, wal)
-            project_id: Optional project ID for project-scoped backup
 
         Returns:
             Backup operation results
@@ -628,7 +597,7 @@ async def get_optimized_database() -> OptimizedDatabase:
 
 
 async def get_optimized_session(
-    project_id: Optional[str] = None,
+    project_id: UUID,
 ) -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency for optimized database session."""
     async with optimized_database.get_session(project_id) as session:
@@ -636,7 +605,7 @@ async def get_optimized_session(
 
 
 async def get_database_health_comprehensive(
-    project_id: Optional[str] = None,
+    project_id: UUID,
 ) -> Dict[str, Any]:
     """FastAPI dependency for comprehensive database health."""
     return await optimized_database.get_comprehensive_health(project_id)

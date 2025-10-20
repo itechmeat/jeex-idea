@@ -83,8 +83,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init-db.sql:/docker-entrypoint-initdb.d/01-init-db.sql:ro
-      - ./docker/postgres/postgresql.conf:/var/lib/postgresql/data/postgresql.conf:ro
-      - ./docker/postgres/pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf:ro
+      - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./docker/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
       - ./docker/postgres/ssl:/docker-entrypoint-initdb.d/ssl:ro
     healthcheck:
       <<: *common-healthcheck
@@ -95,9 +95,9 @@ services:
     command:
       - "postgres"
       - "-c"
-      - "config_file=/var/lib/postgresql/data/postgresql.conf"
+      - "config_file=/etc/postgresql/postgresql.conf"
       - "-c"
-      - "hba_file=/var/lib/postgresql/data/pg_hba.conf"
+      - "hba_file=/etc/postgresql/pg_hba.conf"
       - "-c"
       - "shared_preload_libraries=pg_stat_statements,auto_explain"
       - "-c"
@@ -247,6 +247,9 @@ services:
       SECRET_KEY: ${JWT_SECRET_KEY:-jeex_development_secret_key_change_in_production}
       CORS_ORIGINS: http://localhost:5200,http://localhost:3000
       CORS_CREDENTIALS: true
+
+      # Backup configuration
+      BACKUP_ENCRYPTION: ${BACKUP_ENCRYPTION:-false}
 
       # OpenTelemetry configuration
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317

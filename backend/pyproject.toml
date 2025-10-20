@@ -22,8 +22,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jeex-idea/jeex-idea"
-Repository = "https://github.com/jeex-idea/jeex-idea"
+Homepage = "https://github.com/itechmeat/jeex-idea"
+Repository = "https://github.com/itechmeat/jeex-idea"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -220,5 +220,6 @@ line-ending = "auto"
 skip-magic-trailing-comma = false
 
 [tool.bandit]
-exclude_dirs = ["tests", ".git", "__pycache__"]
-skips = ["B101", "B601", "B602"]
+exclude_dirs = [".git", "__pycache__"]
+skips = ["B601", "B602"]
+per_file_ignores = { "tests/*" = ["B101"] }

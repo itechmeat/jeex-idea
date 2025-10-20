@@ -7,8 +7,11 @@ runtime dependencies or database connections.
 
 import os
 import json
+import logging
 from pathlib import Path
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 def run_static_qa_validation():
@@ -34,7 +37,8 @@ def run_static_qa_validation():
     env_files = [
         (project_root / ".env", "Environment configuration"),
         (project_root / ".env.template", "Environment template"),
-        (project_root / "requirements.txt", "Python requirements"),
+        (project_root / "requirements.txt", "Python requirements (root)"),
+        (backend_path / "requirements.txt", "Python requirements (backend)"),
         (project_root / "docker-compose.yml", "Docker Compose"),
         (project_root / "Makefile", "Build automation"),
         (backend_path / "app", "Application directory"),
@@ -86,8 +90,12 @@ def run_static_qa_validation():
     print("\n⚙️  3. Configuration Validation")
     config_file = backend_path / "app" / "core" / "config.py"
     if config_file.exists():
-        with open(config_file, "r") as f:
-            config_content = f.read()
+        try:
+            with open(config_file, "r") as f:
+                config_content = f.read()
+        except Exception as e:
+            logger.exception("Failed to read config file: %s", config_file)
+            raise
 
         config_items = [
             ("DATABASE_URL", "Database URL configuration"),
@@ -351,6 +359,11 @@ def run_static_qa_validation():
     print("=" * 80)
 
     return overall_score >= 80
+
+
+def test_static_qa_validation():
+    """Pytest wrapper for static QA validation - enables CI integration."""
+    assert run_static_qa_validation(), "Static PostgreSQL validation failed"
 
 
 if __name__ == "__main__":

@@ -82,7 +82,7 @@ class Phase4TestRunner:
             self._generate_final_report()
 
         except Exception as e:
-            logger.error(f"Test runner failed with error: {str(e)}")
+            logger.exception("Test runner failed")
             self.test_results["overall_status"] = "failed"
             raise
 
@@ -123,11 +123,12 @@ class Phase4TestRunner:
             )
 
         except Exception as e:
-            logger.error(f"Database integration tests failed: {str(e)}")
+            logger.exception("Database integration tests failed")
             self.test_results["test_categories"][test_category] = {
                 "status": "failed",
                 "error": str(e),
             }
+            raise
 
     async def _run_crud_operations_tests(self):
         """Run CRUD operations and transactions tests (Task 4.2)."""
@@ -155,11 +156,12 @@ class Phase4TestRunner:
             )
 
         except Exception as e:
-            logger.error(f"CRUD operations tests failed: {str(e)}")
+            logger.exception("CRUD operations tests failed")
             self.test_results["test_categories"][test_category] = {
                 "status": "failed",
                 "error": str(e),
             }
+            raise
 
     async def _run_migration_rollback_tests(self):
         """Run migration rollback procedure tests (Task 4.3)."""
@@ -191,11 +193,12 @@ class Phase4TestRunner:
             )
 
         except Exception as e:
-            logger.error(f"Migration rollback tests failed: {str(e)}")
+            logger.exception("Migration rollback tests failed")
             self.test_results["test_categories"][test_category] = {
                 "status": "failed",
                 "error": str(e),
             }
+            raise
 
     async def _run_failover_recovery_tests(self):
         """Run failover and recovery scenario tests (Task 4.4)."""
@@ -223,11 +226,12 @@ class Phase4TestRunner:
             )
 
         except Exception as e:
-            logger.error(f"Failover and recovery tests failed: {str(e)}")
+            logger.exception("Failover and recovery tests failed")
             self.test_results["test_categories"][test_category] = {
                 "status": "failed",
                 "error": str(e),
             }
+            raise
 
     async def _run_performance_tests(self):
         """Run performance testing and optimization validation (Task 4.5)."""
@@ -262,11 +266,12 @@ class Phase4TestRunner:
             )
 
         except Exception as e:
-            logger.error(f"Performance testing failed: {str(e)}")
+            logger.exception("Performance testing failed")
             self.test_results["test_categories"][test_category] = {
                 "status": "failed",
                 "error": str(e),
             }
+            raise
 
     async def _validate_functional_requirements(self):
         """Validate all functional requirements (REQ-001 through REQ-008)."""
@@ -595,147 +600,227 @@ class Phase4TestRunner:
     # Helper methods for requirement validation
     def _check_postgresql_setup(self) -> bool:
         """Check PostgreSQL 18 setup."""
-        # Implementation would check database version and configuration
-        return True  # Placeholder
+        # TODO: Implement PostgreSQL 18 version and configuration validation
+        raise NotImplementedError("_check_postgresql_setup not implemented")
 
     async def _check_database_schema(self) -> bool:
         """Check database schema implementation."""
-        # Implementation would validate schema against ER diagram
-        return True  # Placeholder
+        # TODO: Implement ER diagram vs live schema validation
+        raise NotImplementedError("_check_database_schema not implemented")
 
     async def _check_migration_system(self) -> bool:
         """Check Alembic migration system."""
-        # Implementation would validate migration files and rollback capability
-        return True  # Placeholder
+        # TODO: Implement Alembic migration files and rollback capability validation
+        raise NotImplementedError("_check_migration_system not implemented")
 
     async def _check_connection_pooling(self) -> bool:
         """Check connection pool management."""
-        # Implementation would validate connection pool configuration and metrics
-        return True  # Placeholder
+        # TODO: Implement database connection pool validation
+        raise NotImplementedError("_check_connection_pooling not implemented")
 
     async def _check_health_monitoring(self) -> bool:
         """Check database health monitoring."""
-        # Implementation would validate health endpoints and monitoring dashboard
-        return True  # Placeholder
+        # TODO: Implement health endpoints and monitoring dashboard validation
+        raise NotImplementedError("_check_health_monitoring not implemented")
 
     async def _check_project_isolation(self) -> bool:
         """Check project isolation enforcement."""
-        # Implementation would test cross-project data access prevention
-        return True  # Placeholder
+        # TODO: Implement cross-project data access prevention testing
+        raise NotImplementedError("_check_project_isolation not implemented")
 
     async def _check_backup_recovery(self) -> bool:
         """Check backup and recovery systems."""
-        # Implementation would validate backup system and recovery procedures
-        return True  # Placeholder
+        # TODO: Implement backup system and recovery procedures validation
+        raise NotImplementedError("_check_backup_recovery not implemented")
 
     async def _check_performance_optimization(self) -> bool:
         """Check performance optimization."""
-        # Implementation would validate query performance and indexing
-        return True  # Placeholder
+        # TODO: Implement query performance and indexing validation
+        raise NotImplementedError("_check_performance_optimization not implemented")
 
     async def _check_p95_response_time(self) -> bool:
         """Check P95 response time requirement."""
-        # Implementation would measure actual P95 response time
-        return True  # Placeholder
+        # TODO: Implement P95 response time measurement and validation
+        raise NotImplementedError("_check_p95_response_time not implemented")
 
     async def _measure_p95_response_time(self) -> str:
         """Measure actual P95 response time."""
-        return "< 100ms"  # Placeholder
+        # TODO: Implement actual P95 response time measurement
+        raise NotImplementedError("_measure_p95_response_time not implemented")
 
     async def _check_concurrent_users(self) -> bool:
         """Check concurrent user support."""
-        # Implementation would test with concurrent users
-        return True  # Placeholder
+        # TODO: Implement concurrent user support testing
+        raise NotImplementedError("_check_concurrent_users not implemented")
 
     async def _measure_concurrent_performance(self) -> str:
         """Measure concurrent user performance."""
-        return "10+ users, <2s response"  # Placeholder
+        # TODO: Implement concurrent user performance measurement
+        raise NotImplementedError("_measure_concurrent_performance not implemented")
 
     async def _check_data_isolation(self) -> bool:
         """Check data isolation security."""
-        # Implementation would test data isolation
-        return True  # Placeholder
+        # TODO: Implement data isolation security testing
+        raise NotImplementedError("_check_data_isolation not implemented")
 
     async def _check_input_validation(self) -> bool:
         """Check input validation."""
-        # Implementation would test input validation and sanitization
-        return True  # Placeholder
+        # TODO: Implement input validation and sanitization testing
+        raise NotImplementedError("_check_input_validation not implemented")
 
     async def _check_connection_security(self) -> bool:
         """Check connection security."""
-        # Implementation would validate secure connections
-        return True  # Placeholder
+        # TODO: Implement secure database connection validation
+        raise NotImplementedError("_check_connection_security not implemented")
 
     async def _check_availability(self) -> bool:
         """Check availability requirements."""
-        # Implementation would measure actual availability
-        return True  # Placeholder
+        # TODO: Implement database availability measurement
+        raise NotImplementedError("_check_availability not implemented")
 
     async def _measure_availability(self) -> str:
         """Measure actual availability."""
-        return "99.9%+"  # Placeholder
+        # TODO: Implement actual database availability measurement
+        raise NotImplementedError("_measure_availability not implemented")
 
     async def _check_backup_reliability(self) -> bool:
         """Check backup reliability."""
-        # Implementation would test backup reliability
-        return True  # Placeholder
+        # TODO: Implement backup reliability testing
+        raise NotImplementedError("_check_backup_reliability not implemented")
 
     async def _check_error_recovery(self) -> bool:
         """Check error recovery procedures."""
-        # Implementation would test error recovery
-        return True  # Placeholder
+        # TODO: Implement error recovery procedures testing
+        raise NotImplementedError("_check_error_recovery not implemented")
 
     async def _check_api_endpoints(self) -> bool:
         """Check all API endpoints."""
-        # Implementation would test all API endpoints
-        return True  # Placeholder
+        # TODO: Implement API endpoints functionality testing
+        raise NotImplementedError("_check_api_endpoints not implemented")
 
     async def _check_database_connectivity(self) -> bool:
         """Check database connectivity."""
-        # Implementation would test database connectivity
-        return True  # Placeholder
+        # TODO: Implement database connectivity testing
+        raise NotImplementedError("_check_database_connectivity not implemented")
 
     async def _check_monitoring_systems(self) -> bool:
         """Check monitoring systems."""
-        # Implementation would validate monitoring systems
-        return True  # Placeholder
+        # TODO: Implement monitoring systems validation
+        raise NotImplementedError("_check_monitoring_systems not implemented")
 
     async def _check_backup_systems(self) -> bool:
         """Check backup systems."""
-        # Implementation would validate backup systems
-        return True  # Placeholder
+        # TODO: Implement backup systems validation
+        raise NotImplementedError("_check_backup_systems not implemented")
 
     async def _check_api_documentation(self) -> bool:
         """Check API documentation."""
-        # Implementation would validate OpenAPI documentation
-        return True  # Placeholder
+        # TODO: Implement OpenAPI documentation validation
+        raise NotImplementedError("_check_api_documentation not implemented")
 
     async def _check_error_handling(self) -> bool:
         """Check error handling."""
-        # Implementation would test error handling
-        return True  # Placeholder
+        # TODO: Implement error handling testing
+        raise NotImplementedError("_check_error_handling not implemented")
 
     async def _check_security_measures(self) -> bool:
         """Check security measures."""
-        # Implementation would validate security measures
-        return True  # Placeholder
+        # TODO: Implement security measures validation
+        raise NotImplementedError("_check_security_measures not implemented")
 
     async def _check_deployment_procedures(self) -> bool:
         """Check deployment procedures."""
-        # Implementation would validate deployment procedures
-        return True  # Placeholder
+        # TODO: Implement deployment procedures validation
+        raise NotImplementedError("_check_deployment_procedures not implemented")
 
     async def _run_pytest_tests(self, test_files: List[str]) -> Dict[str, Any]:
-        """Run pytest tests and return results."""
-        # This would actually run pytest and return results
-        # For now, we'll return mock results
-        return {
-            "total": 25,
-            "passed": 25,
-            "failed": 0,
-            "duration": 45.2,
-            "details": "All tests passed successfully",
-        }
+        """Run pytest tests and return real results."""
+        import time
+        import asyncio
+
+        # Prepare pytest command
+        pytest_cmd = [
+            "python3",
+            "-m",
+            "pytest",
+            "-q",
+            "--maxfail=1",
+            "--tb=short",
+        ] + test_files
+
+        try:
+            start_time = time.time()
+
+            # Run pytest asynchronously using asyncio.create_subprocess_exec
+            process = await asyncio.create_subprocess_exec(
+                *pytest_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self.project_root,
+            )
+
+            stdout, stderr = await process.communicate()
+            duration = time.time() - start_time
+
+            # Parse pytest output to extract results
+            stdout_str = stdout.decode("utf-8") if stdout else ""
+            stderr_str = stderr.decode("utf-8") if stderr else ""
+
+            # Parse pytest summary from output
+            total_tests = 0
+            failed_tests = 0
+            passed_tests = 0
+
+            # Look for pytest summary in output
+            lines = stdout_str.split("\n")
+            for line in lines:
+                if "=" in line and ("passed" in line or "failed" in line):
+                    # Parse line like: "5 passed, 2 failed in 10.5s"
+                    parts = line.split()
+                    for i, part in enumerate(parts):
+                        if part.isdigit():
+                            count = int(part)
+                            if i + 1 < len(parts):
+                                next_part = parts[i + 1]
+                                if "passed" in next_part:
+                                    passed_tests += count
+                                elif "failed" in next_part:
+                                    failed_tests += count
+                            total_tests += count
+
+            # Fallback if parsing failed
+            if total_tests == 0:
+                if process.returncode == 0:
+                    total_tests = passed_tests = 1  # Assume at least one test passed
+                else:
+                    total_tests = failed_tests = 1  # Assume at least one test failed
+
+            return {
+                "total": total_tests,
+                "passed": passed_tests,
+                "failed": failed_tests,
+                "duration": duration,
+                "exit_code": process.returncode,
+                "details": {
+                    "stdout": stdout_str,
+                    "stderr": stderr_str,
+                    "summary": f"{passed_tests} passed, {failed_tests} failed in {duration:.2f}s",
+                },
+            }
+
+        except Exception as e:
+            # Return error information if pytest execution fails
+            return {
+                "total": 0,
+                "passed": 0,
+                "failed": 1,
+                "duration": 0,
+                "exit_code": -1,
+                "details": {
+                    "error": str(e),
+                    "summary": f"Failed to run pytest: {str(e)}",
+                },
+            }
 
 
 async def main():

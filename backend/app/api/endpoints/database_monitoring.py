@@ -16,6 +16,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from pydantic import BaseModel, Field
 import structlog
+from sqlalchemy import text
 
 from ...core.db_optimized import optimized_database
 from ...core.monitoring import performance_monitor
@@ -103,16 +104,14 @@ class QueryAnalysisRequest(BaseModel):
     """Query analysis request."""
 
     query: str = Field(..., description="SQL query to analyze")
-    project_id: Optional[str] = Field(
-        default=None, description="Project ID for context"
-    )
+    project_id: UUID = Field(..., description="Project ID for context")
 
 
 class QueryAnalysisResponse(BaseModel):
     """Query analysis response."""
 
     query: str
-    project_id: Optional[str]
+    project_id: str
     execution_plan: Dict[str, Any]
     analysis: Dict[str, Any]
 
@@ -319,8 +318,7 @@ async def get_performance_dashboard(
         Performance monitoring dashboard with metrics and alerts
     """
     try:
-        project_id_str = str(project_id) if project_id else None
-        dashboard = await performance_monitor.get_performance_dashboard(project_id_str)
+        dashboard = await performance_monitor.get_performance_dashboard(project_id)
         return dashboard
 
     except Exception as e:
@@ -346,12 +344,21 @@ async def analyze_query_performance(
         Query execution plan and optimization recommendations
     """
     try:
+        # Validate that only SELECT queries are allowed for analysis
+        if not request.query.strip().lower().startswith("select "):
+            raise HTTPException(
+                status_code=400, detail="Only SELECT queries are allowed for analysis"
+            )
+
         analysis_data = await performance_monitor.analyze_query_performance(
             query=request.query, project_id=request.project_id
         )
 
         return QueryAnalysisResponse(**analysis_data)
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (like our validation error)
+        raise
     except Exception as e:
         logger.error(
             "Failed to analyze query", error=str(e), query_preview=request.query[:100]
@@ -532,36 +539,36 @@ async def get_database_configuration() -> Dict[str, Any]:
 
         config = {
             "database_connection": {
-                "pool_size": settings.database_pool_size,
-                "max_overflow": settings.database_max_overflow,
-                "pool_timeout": settings.database_pool_timeout,
-                "pool_recycle": settings.database_pool_recycle,
+                "pool_size": settings.database_pool_size(),
+                "max_overflow": settings.database_max_overflow(),
+                "pool_timeout": settings.database_pool_timeout(),
+                "pool_recycle": settings.database_pool_recycle(),
             },
             "performance_monitoring": {
-                "slow_query_threshold_ms": settings.slow_query_threshold_ms,
-                "query_timeout_seconds": settings.query_timeout_seconds,
-                "monitoring_enabled": settings.performance_monitoring_enabled,
+                "slow_query_threshold_ms": settings.slow_query_threshold_ms(),
+                "query_timeout_seconds": settings.query_timeout_seconds(),
+                "monitoring_enabled": settings.performance_monitoring_enabled(),
             },
             "backup_configuration": {
-                "backup_enabled": settings.backup_enabled,
-                "retention_days": settings.backup_retention_days,
-                "compression": settings.backup_compression,
-                "encryption_enabled": settings.backup_encryption_enabled,
+                "backup_enabled": settings.backup_enabled(),
+                "retention_days": settings.backup_retention_days(),
+                "compression": settings.backup_compression(),
+                "encryption_enabled": settings.backup_encryption_enabled(),
             },
             "maintenance_configuration": {
-                "auto_vacuum_enabled": settings.auto_vacuum_enabled,
-                "auto_analyze_enabled": settings.auto_analyze_enabled,
+                "auto_vacuum_enabled": settings.auto_vacuum_enabled(),
+                "auto_analyze_enabled": settings.auto_analyze_enabled(),
                 "maintenance_window": {
-                    "start": settings.maintenance_window_start,
-                    "end": settings.maintenance_window_end,
+                    "start": settings.maintenance_window_start(),
+                    "end": settings.maintenance_window_end(),
                 },
-                "vacuum_threshold_percent": settings.vacuum_threshold_percent,
-                "analyze_threshold_percent": settings.analyze_threshold_percent,
+                "vacuum_threshold_percent": settings.vacuum_threshold_percent(),
+                "analyze_threshold_percent": settings.analyze_threshold_percent(),
             },
             "wal_archiving": {
-                "enabled": settings.wal_archiving_enabled,
-                "retention_days": settings.wal_retention_days,
-                "archive_directory": settings.wal_archive_directory,
+                "enabled": settings.wal_archiving_enabled(),
+                "retention_days": settings.wal_retention_days(),
+                "archive_directory": settings.wal_archive_directory(),
             },
         }
 

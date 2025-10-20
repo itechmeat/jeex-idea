@@ -266,7 +266,7 @@ volumes:
    - Test migration procedures
 
 2. **Finalize File Structure**
-   - Add missing core/**init**.py
+   - Add missing core/__init__.py
    - Create backend/requirements.txt
    - Validate all import paths
 

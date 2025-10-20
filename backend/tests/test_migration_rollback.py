@@ -11,6 +11,8 @@ Comprehensive test suite for migration rollback procedures including:
 
 import pytest
 import asyncio
+import structlog
+from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
 from typing import List, Dict, Any
@@ -408,33 +410,31 @@ class TestMigrationRollback:
         async for session in get_database_session():
             try:
                 # Check if migration files exist and have proper documentation
-                import os
-                import glob
-
-                # Find migration files
-                migration_files = glob.glob(
-                    "/Users/techmeat/www/projects/jeex-idea/backend/alembic/versions/*.py"
+                # Find migration files using relative path from test file location
+                repo_root = Path(__file__).resolve().parents[2]
+                migration_files = list(
+                    (repo_root / "alembic" / "versions").glob("*.py")
                 )
                 assert len(migration_files) > 0, "No migration files found"
 
                 # Check each migration file for required elements
                 for migration_file in migration_files:
-                    with open(migration_file, "r") as f:
+                    with migration_file.open("r") as f:
                         content = f.read()
 
                     # Check for downgrade function (rollback capability)
                     assert "def downgrade()" in content, (
-                        f"Migration {migration_file} missing downgrade function"
+                        f"Migration {migration_file.name} missing downgrade function"
                     )
 
                     # Check for proper imports
                     assert "from alembic import op" in content, (
-                        f"Migration {migration_file} missing proper imports"
+                        f"Migration {migration_file.name} missing proper imports"
                     )
 
                     # Check for revision identifiers
                     assert "revision:" in content, (
-                        f"Migration {migration_file} missing revision identifier"
+                        f"Migration {migration_file.name} missing revision identifier"
                     )
 
                     # Check for create/drop table operations in both upgrade and downgrade
@@ -443,7 +443,7 @@ class TestMigrationRollback:
 
                     if has_create:
                         assert has_drop, (
-                            f"Migration {migration_file} has create_table but no drop_table for rollback"
+                            f"Migration {migration_file.name} has create_table but no drop_table for rollback"
                         )
 
                 logger.info("Rollback procedure documentation validation completed")

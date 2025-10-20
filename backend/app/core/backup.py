@@ -16,11 +16,13 @@ import time
 import hashlib
 import json
 import logging
+import shutil
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, AsyncGenerator
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from urllib.parse import urlparse
 
 import asyncpg
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -137,9 +139,7 @@ class BackupManager:
     def _load_backup_config(self) -> BackupConfig:
         """Load backup configuration from settings."""
         return BackupConfig(
-            backup_directory=os.getenv(
-                "BACKUP_DIRECTORY", "/var/lib/postgresql/backups"
-            ),
+            backup_directory=os.getenv("BACKUP_DIRECTORY", "/app/backups"),
             retention_days=int(os.getenv("BACKUP_RETENTION_DAYS", "30")),
             compression_type=CompressionType(os.getenv("BACKUP_COMPRESSION", "gzip")),
             encryption_enabled=os.getenv("BACKUP_ENCRYPTION", "true").lower() == "true",
@@ -157,19 +157,18 @@ class BackupManager:
                 ),  # Every 15 minutes
             },
             wal_archive_directory=os.getenv(
-                "WAL_ARCHIVE_DIRECTORY", "/var/lib/postgresql/wal_archive"
+                "WAL_ARCHIVE_DIRECTORY", "/app/wal_archive"
             ),
             wal_retention_days=int(os.getenv("WAL_RETENTION_DAYS", "7")),
         )
 
     def _initialize_encryption(self) -> None:
         """Initialize backup encryption."""
-        if self.backup_config.encryption_key:
-            self.encryption_key = self.backup_config.encryption_key.encode()
-        else:
-            # Generate a new key (in production, this should be from a secure source)
-            self.encryption_key = Fernet.generate_key()
-            logger.warning("Generated new encryption key - store it securely!")
+        if not self.backup_config.encryption_key:
+            raise RuntimeError(
+                "BACKUP_ENCRYPTION is enabled but BACKUP_ENCRYPTION_KEY is not set"
+            )
+        self.encryption_key = self.backup_config.encryption_key.encode()
 
         self.cipher = Fernet(self.encryption_key)
 
@@ -179,8 +178,8 @@ class BackupManager:
         os.makedirs(self.backup_config.backup_directory, exist_ok=True)
         os.makedirs(self.backup_config.wal_archive_directory, exist_ok=True)
 
-        # Setup WAL archiving
-        await self._setup_wal_archiving()
+        # Note: WAL archiving should be configured through postgresql.conf by DevOps
+        # This application should not modify cluster configuration
 
         # Start backup scheduler
         await self._start_backup_scheduler()
@@ -190,30 +189,8 @@ class BackupManager:
 
         logger.info("Backup system initialized successfully")
 
-    async def _setup_wal_archiving(self) -> None:
-        """Configure PostgreSQL WAL archiving."""
-        try:
-            async with database_manager.get_session() as session:
-                # Enable WAL archiving
-                await session.execute(
-                    text("""
-                    ALTER SYSTEM SET wal_level = replica;
-                    ALTER SYSTEM SET archive_mode = on;
-                    ALTER SYSTEM SET archive_command = 'cp %p {wal_archive_path}/%f';
-                    ALTER SYSTEM SET archive_timeout = '60s';
-                """).bindparams(
-                        wal_archive_path=self.backup_config.wal_archive_directory
-                    )
-                )
-
-                # Reload configuration
-                await session.execute(text("SELECT pg_reload_conf()"))
-
-                logger.info("WAL archiving configured")
-
-        except Exception as e:
-            logger.error("Failed to setup WAL archiving", error=str(e))
-            raise
+    # Note: WAL archiving configuration should be handled through postgresql.conf
+    # by DevOps team. Applications should not modify cluster configuration.
 
     async def _start_backup_scheduler(self) -> None:
         """Start automated backup scheduling."""
@@ -363,29 +340,42 @@ class BackupManager:
             "postgresql+asyncpg://", "postgresql://"
         )
 
-        # Create pg_dump command
+        # Create pg_dump command with proper credential handling
         cmd = [
             "pg_dump",
             "--format=custom",
             "--verbose",
-            "--no-password",
             "--file",
             backup_file,
+            "--dbname",
             db_url,
         ]
 
-        # Add project-specific filtering if project_id is provided
-        if backup_info.project_id:
-            cmd.extend(
-                [
-                    "--exclude-table-data=project_*",  # Exclude other projects
-                    f"--include-table-data=project_{backup_info.project_id}_*",
-                ]
-            )
+        # Set up environment variables for libpq credential handling
+        env = os.environ.copy()
 
-        # Execute backup
+        # Parse credentials into env for libpq tools
+        u = urlparse(db_url)
+        if u.password:
+            env["PGPASSWORD"] = u.password
+        if u.username:
+            env["PGUSER"] = u.username
+        if u.hostname:
+            env["PGHOST"] = u.hostname
+        if u.port:
+            env["PGPORT"] = str(u.port)
+        if u.path and len(u.path) > 1:
+            env["PGDATABASE"] = u.path[1:]
+
+        # Note: Project-specific filtering removed as it only works at table level, not row level
+        # For project-specific backups, use database-level permissions or schemas instead
+
+        # Execute backup with proper environment
         process = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
 
         stdout, stderr = await process.communicate()
@@ -411,10 +401,12 @@ class BackupManager:
         await self._create_wal_backup(backup_info)
 
     async def _create_wal_backup(self, backup_info: BackupInfo) -> None:
-        """Create a WAL backup."""
-        # Find recent WAL files
+        """Create a WAL backup from archived WAL files."""
+        # Find WAL files in the archive directory (safe to consume)
         wal_files = []
-        wal_dir = "/var/lib/postgresql/data/pg_wal"
+        wal_dir = (
+            self.backup_config.wal_archive_directory
+        )  # ✅ SAFE: Use configured archive directory
 
         if os.path.exists(wal_dir):
             for file in os.listdir(wal_dir):
@@ -423,16 +415,16 @@ class BackupManager:
 
         backup_info.wal_files = wal_files
 
-        # Copy WAL files to backup directory
+        # Copy WAL files to backup directory (safe copy, not move)
         backup_wal_dir = os.path.join(
             self.backup_config.backup_directory, f"{backup_info.backup_id}_wal"
         )
         os.makedirs(backup_wal_dir, exist_ok=True)
 
         for wal_file in wal_files:
-            source = os.path.join(wal_dir, wal_file)
-            destination = os.path.join(backup_wal_dir, wal_file)
-            await asyncio.to_thread(os.rename, source, destination)
+            src = os.path.join(wal_dir, wal_file)
+            dst = os.path.join(backup_wal_dir, wal_file)
+            await asyncio.to_thread(shutil.copy2, src, dst)  # ✅ SAFE: Copy, not move
 
         # Calculate total size
         total_size = 0
@@ -467,7 +459,10 @@ class BackupManager:
         sha256_hash = hashlib.sha256()
 
         async with aiofiles.open(file_path, "rb") as f:
-            async for chunk in f:
+            while True:
+                chunk = await f.read(1024 * 1024)  # ✅ Read 1MB chunks
+                if not chunk:
+                    break
                 sha256_hash.update(chunk)
 
         return sha256_hash.hexdigest()
@@ -595,33 +590,57 @@ class BackupManager:
 
     async def _restore_full_backup(self, backup_file: str) -> None:
         """Restore from full backup using pg_restore."""
-        # Decompress if needed
+        # Handle multiple compression formats
         if backup_file.endswith(".gz"):
             decompressed_file = backup_file[:-3]
-            cmd = ["gunzip", "-c", backup_file, ">", decompressed_file]
-            process = await asyncio.create_subprocess_shell(" ".join(cmd))
+            process = await asyncio.create_subprocess_exec(
+                "gunzip", "-c", backup_file, decompressed_file
+            )
             await process.communicate()
             backup_file = decompressed_file
+        elif backup_file.endswith(".lz4"):
+            decompressed_file = backup_file[:-4]
+            process = await asyncio.create_subprocess_exec(
+                "lz4", "-d", "-f", backup_file, decompressed_file
+            )
+            await process.communicate()
+            backup_file = decompressed_file
+        elif backup_file.endswith(".zstd") or backup_file.endswith(".zst"):
+            decompressed_file = backup_file.rsplit(".", 1)[0]
+            process = await asyncio.create_subprocess_exec(
+                "zstd", "-d", "-f", backup_file, "-o", decompressed_file
+            )
+            await process.communicate()
+            backup_file = decompressed_file
+        else:
+            # No compression, use file as-is
+            pass
 
-        # Parse database URL for pg_restore
+        # Proper credentials handling
         db_url = self.settings.database_url.replace(
             "postgresql+asyncpg://", "postgresql://"
         )
-
-        # Restore database
         cmd = [
             "pg_restore",
             "--verbose",
             "--clean",
             "--if-exists",
-            "--no-password",
             "--dbname",
-            db_url.split("/")[-1],
+            db_url,
             backup_file,
         ]
+        env = os.environ.copy()
+
+        # Parse credentials for pg_restore
+        u = urlparse(db_url)
+        if u.password:
+            env["PGPASSWORD"] = u.password
 
         process = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
 
         stdout, stderr = await process.communicate()
@@ -720,26 +739,37 @@ class BackupManager:
 
     async def cleanup_old_backups(self) -> None:
         """Clean up old backups based on retention policy."""
+        original_count = len(self._backup_history)
         cutoff_date = datetime.utcnow() - timedelta(
             days=self.backup_config.retention_days
         )
+        wal_cutoff = datetime.utcnow() - timedelta(
+            days=self.backup_config.wal_retention_days
+        )
 
-        # Remove old backups from history
-        original_count = len(self._backup_history)
-        self._backup_history = [
-            backup
-            for backup in self._backup_history
-            if backup.start_time > cutoff_date or backup.backup_type == BackupType.WAL
+        # Find backups to delete
+        old_fulls = [
+            b
+            for b in self._backup_history
+            if b.backup_type != BackupType.WAL and b.start_time <= cutoff_date
+        ]
+        old_wals = [
+            b
+            for b in self._backup_history
+            if b.backup_type == BackupType.WAL and b.start_time <= wal_cutoff
         ]
 
-        # Remove old backup files
-        for backup in self._backup_history:
-            if backup.start_time <= cutoff_date:
-                await self._delete_backup_files(backup)
+        # Delete files first
+        for b in old_fulls + old_wals:
+            await self._delete_backup_files(b)
+
+        # Then update history
+        self._backup_history = [
+            b for b in self._backup_history if b not in set(old_fulls + old_wals)
+        ]
 
         # Save updated history
         await self._save_backup_history()
-
         removed_count = original_count - len(self._backup_history)
         if removed_count > 0:
             logger.info("Cleaned up old backups", removed_count=removed_count)

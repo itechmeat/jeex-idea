@@ -8,13 +8,13 @@ Multiple architectural approaches were considered to meet the functional and non
 
 ## Decision
 
-**Selected Variant A: Монолитная Integrated PostgreSQL**
+**Selected Variant A: Monolithic Integrated PostgreSQL**
 
 A single PostgreSQL 18 container with integrated PgBouncer functionality, direct SQLAlchemy async connections, Alembic migrations, and built-in health monitoring.
 
 ## Alternatives Considered
 
-### Variant A: Монолитная Integrated PostgreSQL - SELECTED
+### Variant A: Monolithic Integrated PostgreSQL - SELECTED
 
 **Pros:**
 
@@ -32,7 +32,7 @@ A single PostgreSQL 18 container with integrated PgBouncer functionality, direct
 
 **Verdict:** SELECTED - Optimal balance of performance, security, and implementation complexity
 
-### Variant B: Многоуровневая PostgreSQL с Microservices
+### Variant B: Multi-Service PostgreSQL with Microservices
 
 **Pros:**
 
@@ -51,7 +51,7 @@ A single PostgreSQL 18 container with integrated PgBouncer functionality, direct
 
 **Verdict:** REJECTED - Over-engineering for current scope, performance and security concerns
 
-### Variant C: Event-Driven PostgreSQL с CQRS
+### Variant C: Event-Driven PostgreSQL with CQRS
 
 **Pros:**
 

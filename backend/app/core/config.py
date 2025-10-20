@@ -11,6 +11,7 @@ from typing import Optional, List
 import os
 from functools import lru_cache
 from dotenv import load_dotenv
+from urllib.parse import quote_plus
 
 # Load environment variables from .env file
 load_dotenv()
@@ -33,7 +34,7 @@ class Settings(BaseSettings):
 
     # Database configuration - Phase 3 Optimized
     DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://jeex_user:jeex_secure_password@localhost:5432/jeex_idea",
+        ...,
         description="Database connection URL with asyncpg driver",
     )
     DATABASE_POOL_SIZE: int = Field(
@@ -80,7 +81,7 @@ class Settings(BaseSettings):
 
     # Security configuration
     SECRET_KEY: str = Field(
-        default="jeex_development_secret_key_change_in_production",
+        ...,
         min_length=32,
         description="JWT secret key for authentication",
     )
@@ -187,15 +188,9 @@ class Settings(BaseSettings):
     @field_validator("DATABASE_URL")
     @classmethod
     def validate_database_url(cls, v):
-        """Validate database URL format and inject password from environment."""
+        """Validate database URL format."""
         if not v.startswith(("postgresql://", "postgresql+asyncpg://")):
             raise ValueError("DATABASE_URL must be a PostgreSQL connection URL")
-
-        # If using default password, replace with environment variable
-        if "jeex_secure_password" in v:
-            postgres_password = os.getenv("POSTGRES_PASSWORD", "jeex_secure_password")
-            v = v.replace("jeex_secure_password", postgres_password)
-
         return v
 
     @field_validator("ENVIRONMENT")

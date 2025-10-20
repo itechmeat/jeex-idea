@@ -12,7 +12,7 @@ Agent execution tracking and management with:
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, func
+from sqlalchemy import select, update, delete, func, case
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from typing import List, Optional, Dict, Any
 from uuid import UUID, uuid4
@@ -138,6 +138,9 @@ class AgentExecutionRepository:
 
             self.session.add(execution)
             await self.session.flush()  # Get the ID without committing
+
+            # Commit the transaction
+            await self.session.commit()
 
             # Log performance
             duration = (time.time() - start_time) * 1000
@@ -305,6 +308,9 @@ class AgentExecutionRepository:
                 .values(**update_values)
             )
 
+            # Commit the transaction
+            await self.session.commit()
+
             await self.session.refresh(execution)
 
             # Log performance
@@ -354,10 +360,10 @@ class AgentExecutionRepository:
             # Get metrics
             metrics_query = select(
                 func.count(AgentExecution.id).label("total_executions"),
-                func.count(func.nullif(AgentExecution.status, "failed")).label(
-                    "successful_executions"
-                ),
-                func.count(func.nullif(AgentExecution.status, "completed")).label(
+                func.sum(
+                    case((AgentExecution.status == "completed", 1), else_=0)
+                ).label("successful_executions"),
+                func.sum(case((AgentExecution.status == "failed", 1), else_=0)).label(
                     "failed_executions"
                 ),
                 func.avg(

@@ -126,7 +126,7 @@ Based on the architecture ER diagrams, the database will implement these core ta
 ```sql
 -- Users table for authentication and profile management
 CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
     email VARCHAR(255) UNIQUE NOT NULL,
     name VARCHAR(255) NOT NULL,
     profile_data JSONB DEFAULT '{}',
@@ -137,7 +137,7 @@ CREATE TABLE users (
 
 -- Projects table with language and status tracking
 CREATE TABLE projects (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
     name VARCHAR(255) NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'draft',
     current_step INTEGER DEFAULT 1 CHECK (current_step BETWEEN 1 AND 4),
@@ -149,7 +149,7 @@ CREATE TABLE projects (
 
 -- Document versions for content management
 CREATE TABLE document_versions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
     project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
     document_type VARCHAR(50) NOT NULL,
     version INTEGER NOT NULL,
@@ -161,7 +161,7 @@ CREATE TABLE document_versions (
 
 -- Agent execution tracking
 CREATE TABLE agent_executions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
     project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
     agent_type VARCHAR(50) NOT NULL,
     correlation_id UUID NOT NULL,
@@ -175,7 +175,7 @@ CREATE TABLE agent_executions (
 
 -- Export management
 CREATE TABLE exports (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
     project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
     file_path TEXT,

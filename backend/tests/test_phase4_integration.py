@@ -19,7 +19,7 @@ import structlog
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
-from httpx import AsyncClient
+from httpx import AsyncClient, Response
 
 from app.main import app
 from app.db import init_database, get_database_session, close_database
@@ -349,9 +349,7 @@ class TestCRUDOperations:
         responses = await asyncio.gather(*tasks, return_exceptions=True)
 
         # All operations should succeed
-        successful = [
-            r for r in responses if isinstance(r, type(await create_document(0)))
-        ]
+        successful = [r for r in responses if isinstance(r, Response)]
         assert len(successful) == 5
 
         # Verify all documents were created

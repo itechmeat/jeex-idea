@@ -177,9 +177,8 @@ class TestFinalQAPostgreSQL:
             assert hasattr(Export, "project_id"), (
                 "Export model missing project_id field"
             )
-            assert hasattr(Export, "export_type"), (
-                "Export model missing export_type field"
-            )
+            assert hasattr(Export, "file_path"), "Export model missing file_path field"
+            assert hasattr(Export, "manifest"), "Export model missing manifest field"
             assert hasattr(Export, "status"), "Export model missing status field"
 
             print("✓ Database models structure validation passed")

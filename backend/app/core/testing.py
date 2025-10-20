@@ -533,20 +533,22 @@ class DatabaseTestSuite:
                 assert effective_cache_size, "effective_cache_size should be configured"
 
             # Test 2: Connection limits
-            result = await session.execute(text("SHOW max_connections"))
-            max_connections = result.scalar()
+            async with optimized_database.get_session() as session2:
+                result = await session2.execute(text("SHOW max_connections"))
+                max_connections = result.scalar()
 
-            assert (
-                int(max_connections)
-                >= self.settings.database_pool_size
-                + self.settings.database_max_overflow
-            )
+                assert (
+                    int(max_connections)
+                    >= self.settings.database_pool_size
+                    + self.settings.database_max_overflow
+                )
 
             # Test 3: Performance monitoring settings
-            result = await session.execute(text("SHOW log_min_duration_statement"))
-            log_min_duration = result.scalar()
+            async with optimized_database.get_session() as session3:
+                result = await session3.execute(text("SHOW log_min_duration_statement"))
+                log_min_duration = result.scalar()
 
-            assert int(log_min_duration) == self.settings.slow_query_threshold_ms
+                assert int(log_min_duration) == self.settings.slow_query_threshold_ms
 
             test_result.status = "passed"
             test_result.duration_seconds = time.time() - start_time

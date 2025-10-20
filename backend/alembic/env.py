@@ -24,14 +24,35 @@ from app.models import *  # Import all models
 config = context.config
 
 # Load environment variables from .env file
-from dotenv import load_dotenv
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env'))
+from dotenv import load_dotenv, find_dotenv
+
+# Load closest .env (repo root or backend/)
+load_dotenv(
+    find_dotenv() or os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+)
 
 # Use environment variable for database URL or fallback to alembic.ini
-database_url = os.getenv('DATABASE_URL') or config.get_main_option("sqlalchemy.url")
-if database_url:
-    # Replace asyncpg driver with psycopg2 for migrations
-    database_url = database_url.replace('postgresql+asyncpg://', 'postgresql://')
+database_url = os.getenv("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+
+# Validate database URL is present
+if not database_url:
+    raise ValueError(
+        "DATABASE_URL environment variable or sqlalchemy.url in alembic.ini is required but not set"
+    )
+
+# Replace asyncpg driver with psycopg2 for migrations
+database_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
+
+# Expand all environment variables in the database URL
+import re
+
+env_vars = re.findall(r"\$\{([^}]+)\}", database_url)
+for var in env_vars:
+    value = os.getenv(var)
+    if value is None:
+        raise ValueError(f"Environment variable {var} is required but not set")
+    database_url = database_url.replace(f"${{{var}}}", value)
+
     config.set_main_option("sqlalchemy.url", database_url)
 
 # Interpret the config file for Python logging.
@@ -62,6 +83,16 @@ def run_migrations_offline() -> None:
 
     """
     url = config.get_main_option("sqlalchemy.url")
+    # Ensure environment variables are expanded in offline mode too
+    if url and "${POSTGRES_PASSWORD}" in url:
+        pw = os.getenv("POSTGRES_PASSWORD", "")
+        if pw:
+            url = url.replace("${POSTGRES_PASSWORD}", pw)
+        else:
+            raise ValueError(
+                "POSTGRES_PASSWORD environment variable is required but not set"
+            )
+
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -98,16 +129,38 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    configuration = config.get_section(config.config_ini_section)
-    connectable = create_engine(
-        configuration.get("sqlalchemy.url"),
-        poolclass=pool.NullPool,
-    )
+    try:
+        # Validate inputs
+        configuration = config.get_section(config.config_ini_section)
+        if not configuration:
+            raise ValueError("Alembic configuration section not found")
 
-    with connectable.connect() as connection:
-        do_run_migrations(connection)
+        if not target_metadata:
+            raise ValueError("Target metadata is required for migrations")
 
-    connectable.dispose()
+        database_url = configuration.get("sqlalchemy.url")
+        if not database_url:
+            raise ValueError("Database URL not found in configuration")
+
+        connectable = create_engine(
+            database_url,
+            poolclass=pool.NullPool,
+        )
+
+        # Validate connection
+        if not connectable:
+            raise RuntimeError("Failed to create database engine")
+
+        with connectable.connect() as connection:
+            # Validate connection
+            if not connection:
+                raise RuntimeError("Failed to establish database connection")
+            do_run_migrations(connection)
+
+        connectable.dispose()
+    except Exception as e:
+        # Convert low-level errors to descriptive exceptions
+        raise RuntimeError(f"Migration failed: {str(e)}") from e
 
 
 if context.is_offline_mode():

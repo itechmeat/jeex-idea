@@ -134,11 +134,12 @@ class ProjectRepository:
 
         except IntegrityError as e:
             await self.session.rollback()
-            raise HTTPException(status_code=400, detail="Invalid project data")
+            logger.error("Integrity error creating project", exc_info=True)
+            raise HTTPException(status_code=400, detail="Invalid project data") from e
         except SQLAlchemyError as e:
             await self.session.rollback()
-            logger.error("Database error creating project", error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            logger.exception("Database error creating project")
+            raise HTTPException(status_code=500, detail="Database error") from e
 
     async def get_by_id(self, project_id: UUID, user_id: UUID) -> Optional[Project]:
         """Get project by ID with user access validation."""
@@ -163,8 +164,8 @@ class ProjectRepository:
             return project
 
         except SQLAlchemyError as e:
-            logger.error("Database error getting project", error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            logger.exception("Database error getting project")
+            raise HTTPException(status_code=500, detail="Database error") from e
 
     async def get_user_projects(
         self,
@@ -208,8 +209,8 @@ class ProjectRepository:
             return list(projects), total
 
         except SQLAlchemyError as e:
-            logger.error("Database error listing projects", error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            logger.exception("Database error listing projects")
+            raise HTTPException(status_code=500, detail="Database error") from e
 
     async def update(
         self, project_id: UUID, user_id: UUID, update_data: ProjectUpdate
@@ -299,8 +300,8 @@ class ProjectRepository:
 
         except SQLAlchemyError as e:
             await self.session.rollback()
-            logger.error("Database error deleting project", error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            logger.exception("Database error deleting project")
+            raise HTTPException(status_code=500, detail="Database error") from e
 
 
 # API Endpoints

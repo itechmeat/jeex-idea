@@ -11,7 +11,11 @@ from sqlalchemy import text
 from typing import Dict, Any, Optional
 import logging
 import asyncio
+import time
 from datetime import datetime
+
+# Track process start time for uptime calculation
+PROCESS_START_TIME = time.time()
 
 from ...db import get_database_session, get_database_health, get_database_metrics
 from ...core.config import get_settings
@@ -54,14 +58,15 @@ async def readiness_check(
     # Check database connectivity
     try:
         result = await db.execute(text("SELECT 1"))
-        assert result.scalar() == 1
+        if result.scalar() != 1:
+            raise RuntimeError("Database probe returned unexpected result")
         checks["database"] = {
             "status": "healthy",
             "message": "Database connection successful",
         }
     except Exception as e:
         ready = False
-        logger.error("Database readiness check failed", error=str(e), exc_info=True)
+        logger.exception("Database readiness check failed")
         checks["database"] = {"status": "unhealthy", "message": str(e)}
 
     # Check Qdrant connectivity (if configured)
@@ -106,7 +111,7 @@ async def liveness_check() -> Dict[str, Any]:
     return {
         "status": "alive",
         "timestamp": datetime.utcnow().isoformat(),
-        "uptime_seconds": 0,  # TODO: Implement uptime tracking
+        "uptime_seconds": int(time.time() - PROCESS_START_TIME),
     }
 
 
@@ -122,7 +127,7 @@ async def database_health() -> Dict[str, Any]:
         health_data = await get_database_health()
         return health_data
     except Exception as e:
-        logger.error("Database health check failed", error=str(e), exc_info=True)
+        logger.exception("Database health check failed")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={

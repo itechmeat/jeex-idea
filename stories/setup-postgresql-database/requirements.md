@@ -19,7 +19,7 @@ The implementation must ensure data consistency, performance optimization, secur
 
 **EARS Requirements:**
 
-1. The PostgreSQL Database System shall run PostgreSQL 18 with UUID v7 extension enabled.
+1. The PostgreSQL Database System shall run PostgreSQL 18 with native UUID v7 support enabled.
 2. When the database container starts, the PostgreSQL Database System shall initialize with optimal performance settings for application workload.
 3. While the database is running, the PostgreSQL Database System shall maintain connection limits and resource constraints according to specifications.
 4. Where the database environment is production, the PostgreSQL Database System shall implement TLS encryption for all connections.
@@ -39,7 +39,8 @@ The implementation must ensure data consistency, performance optimization, secur
 2. When the migration runs, the PostgreSQL Database System shall create the projects table with language and status tracking fields.
 3. While setting up document storage, the PostgreSQL Database System shall create the document_versions table with proper foreign key constraints.
 4. Where agent execution tracking is required, the PostgreSQL Database System shall create the agent_executions table with correlation ID tracking.
-5. If table creation fails due to constraint violations, then the PostgreSQL Database System shall provide detailed error messages with specific constraint information.
+5. The PostgreSQL Database System shall create the exports table with UUID primary key, project_id foreign key, export_format and status fields, timestamps (created_at, completed_at), and a metadata JSON column.
+6. If table creation fails due to constraint violations, then the PostgreSQL Database System shall provide detailed error messages with specific constraint information.
 
 **Rationale:** Provides complete data model implementation with proper relationships and constraints.
 
@@ -246,3 +247,39 @@ While backup operations are scheduled, the PostgreSQL Database System shall achi
 - **Given:** Database is running in production environment
 - **When:** Uptime is measured over 30 days
 - **Then:** Database uptime is 99.9% or higher excluding planned maintenance
+
+**Test Scenario for PERF-002:**
+
+- **Given:** Simulated peak load conditions are established
+- **When:** Sustained throughput target TPS is maintained over time period
+- **Then:** Throughput meets or exceeds target and error rate remains below threshold
+
+**Test Scenario for PERF-003:**
+
+- **Given:** Typical database workload is running
+- **When:** Resource utilization is measured over defined time period
+- **Then:** CPU, memory, and I/O remain within defined limits and alerts trigger if exceeded
+
+**Test Scenario for SEC-002:**
+
+- **Given:** Privileged and non-privileged database actions are performed
+- **When:** Actions are executed by different user roles
+- **Then:** Audit logs record actor, action, timestamp and data is stored in immutable storage
+
+**Test Scenario for SEC-003:**
+
+- **Given:** Active encryption keys are in use for data protection
+- **When:** Scheduled key rotation occurs
+- **Then:** Keys rotate without downtime and data remains decryptable, with rotation logs generated
+
+**Test Scenario for REL-002:**
+
+- **Given:** Primary database node experiences failure
+- **When:** Automated failover is triggered
+- **Then:** Standby is promoted within RTO and no data loss occurs beyond RPO
+
+**Test Scenario for REL-003:**
+
+- **Given:** Regional outage occurs and backups are available
+- **When:** Restore is executed to alternate region
+- **Then:** Service is restored within recovery window and integrity checks pass successfully

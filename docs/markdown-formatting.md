@@ -87,7 +87,7 @@ The pre-commit hook (`.github/hooks/pre-commit`) automatically runs markdown lin
 **Error**: `MD040/fenced-code-language Fenced code blocks should have a language specified`
 
 **Fix**: Add language to code blocks:
-```markdown
+````markdown
 <!-- Before -->
 ```
 code here
@@ -97,7 +97,7 @@ code here
 ```python
 code here
 ```
-```
+````
 
 ### Emphasis Used as Heading
 **Error**: `MD036/no-emphasis-as-heading Emphasis used instead of a heading`

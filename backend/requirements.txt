@@ -44,9 +44,8 @@ opentelemetry-exporter-otlp-proto-http==1.29.0
 prometheus-client==0.23.1
 psutil==7.1.0
 
-# Connection pooling and circuit breaker
+# Connection pooling and retry
 tenacity==9.0.0
-pybreaker==1.4.1
 
 # Database performance monitoring
 # Note: pg-stats packages not available, monitoring will be implemented via SQLAlchemy

@@ -39,9 +39,9 @@ class TestSimplifiedQAPostgreSQL:
             print("✓ PostgreSQL basic connectivity test passed")
 
         except ImportError as e:
-            pytest.skip(f"Database components not available: {e}")
+            raise pytest.skip(f"Database components not available: {e}") from e
         except Exception as e:
-            pytest.fail(f"PostgreSQL connectivity test failed: {e}")
+            raise pytest.fail(f"PostgreSQL connectivity test failed: {e}") from e
 
     async def test_database_configuration_validation(self):
         """Test database configuration validation."""
@@ -119,16 +119,19 @@ class TestSimplifiedQAPostgreSQL:
             assert hasattr(Export, "project_id"), (
                 "Export model missing project_id field"
             )
-            assert hasattr(Export, "export_type"), (
-                "Export model missing export_type field"
+            assert hasattr(Export, "status"), "Export model missing status field"
+            assert hasattr(Export, "manifest"), "Export model missing manifest field"
+            assert hasattr(Export, "file_path"), "Export model missing file_path field"
+            assert hasattr(Export, "created_by"), (
+                "Export model missing created_by field"
             )
 
             print("✓ Database models validation passed")
 
         except ImportError as e:
-            pytest.skip(f"Database models not available: {e}")
+            raise pytest.skip(f"Database models not available: {e}") from e
         except Exception as e:
-            pytest.fail(f"Database models validation failed: {e}")
+            raise pytest.fail(f"Database models validation failed: {e}") from e
 
     async def test_fastapi_app_integration(self):
         """Test FastAPI application integration."""
@@ -146,9 +149,9 @@ class TestSimplifiedQAPostgreSQL:
             print("✓ FastAPI integration test passed")
 
         except ImportError as e:
-            pytest.skip(f"FastAPI app not available: {e}")
+            raise pytest.skip(f"FastAPI app not available: {e}") from e
         except Exception as e:
-            pytest.fail(f"FastAPI integration test failed: {e}")
+            raise pytest.fail(f"FastAPI integration test failed: {e}") from e
 
     async def test_database_file_structure(self):
         """Test database-related file structure exists."""
@@ -243,8 +246,8 @@ class TestSimplifiedQAPostgreSQL:
             from app.core.database import database_manager
 
             story_validation_results["phase_1_postgresql_config"] = True
-        except:
-            pass
+        except Exception as e:
+            logger.warning("PostgreSQL configuration validation failed: %s", e)
 
         # Phase 2: Database Schema
         try:
@@ -257,8 +260,8 @@ class TestSimplifiedQAPostgreSQL:
             )
 
             story_validation_results["phase_2_database_schema"] = True
-        except:
-            pass
+        except Exception as e:
+            logger.warning("Database schema validation failed: %s", e)
 
         # Phase 3: Optimization
         try:
@@ -266,16 +269,16 @@ class TestSimplifiedQAPostgreSQL:
 
             if hasattr(database_manager, "metrics"):
                 story_validation_results["phase_3_optimization"] = True
-        except:
-            pass
+        except Exception as e:
+            logger.warning("Database optimization validation failed: %s", e)
 
         # Phase 4: Integration
         try:
             from app.main import app
 
             story_validation_results["phase_4_integration"] = True
-        except:
-            pass
+        except Exception as e:
+            logger.warning("Integration validation failed: %s", e)
 
         # Variant A Implementation
         docker_compose_path = backend_path.parent / "docker-compose.yml"
@@ -323,24 +326,24 @@ class TestSimplifiedQAPostgreSQL:
             from app.core.database import database_manager
 
             readiness_checks["database_configuration"] = True
-        except:
-            pass
+        except Exception as e:
+            logger.warning("Database configuration check failed: %s", e)
 
         # Check models implemented
         try:
             from app.models import User, Project
 
             readiness_checks["models_implemented"] = True
-        except:
-            pass
+        except Exception as e:
+            logger.warning("Models implementation check failed: %s", e)
 
         # Check FastAPI integration
         try:
             from app.main import app
 
             readiness_checks["fastapi_integration"] = True
-        except:
-            pass
+        except Exception as e:
+            logger.warning("FastAPI integration check failed: %s", e)
 
         # Check Docker setup
         docker_path = backend_path.parent / "docker-compose.yml"

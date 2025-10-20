@@ -127,7 +127,7 @@ class Project(Base, TimestampMixin, SoftDeleteMixin):
         return f"<Project(id={self.id}, name={self.name}, language={self.language})>"
 
 
-class DocumentVersion(Base, TimestampMixin):
+class DocumentVersion(Base, TimestampMixin, SoftDeleteMixin):
     """Document version model with project isolation."""
 
     __tablename__ = "document_versions"
@@ -162,6 +162,7 @@ class DocumentVersion(Base, TimestampMixin):
     project: Mapped["Project"] = relationship(
         "Project", back_populates="document_versions"
     )
+    created_by_user: Mapped["User"] = relationship("User")
 
     # Table constraints
     __table_args__ = ({"schema": "public"},)

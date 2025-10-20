@@ -1,23 +1,23 @@
 -- JEEX Idea PostgreSQL Database Initialization
 -- This script runs on container startup to create the database schema
--- Implements PostgreSQL 18 with UUID v7 support and security hardening
+-- Implements PostgreSQL 18 with UUID v4 support (pgcrypto) and security hardening
 
 -- Set timezone to UTC for consistent timestamp handling
 SET timezone = 'UTC';
 
--- Create required extensions for UUID v7 support and performance
+-- Create required extensions for UUID v4 support and performance
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA public;
 CREATE EXTENSION IF NOT EXISTS "pg_stat_statements" WITH SCHEMA public;
 CREATE EXTENSION IF NOT EXISTS "pg_trgm" WITH SCHEMA public;
 CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA public;
 
--- Verify UUID v7 generation (PostgreSQL 18+)
--- Check if gen_random_uuid() is available for UUID v7
+-- Verify UUID v4 generation using pgcrypto
+-- gen_random_uuid() from pgcrypto generates UUID v4, not v7
 DO $$
 BEGIN
-    -- Test UUID v7 generation
+    -- Test UUID v4 generation via pgcrypto
     PERFORM gen_random_uuid();
-    RAISE NOTICE 'UUID v7 generation (gen_random_uuid) is available';
+    RAISE NOTICE 'UUID v4 generation (gen_random_uuid from pgcrypto) is available';
 EXCEPTION WHEN undefined_function THEN
     RAISE NOTICE 'Falling back to uuid-ossp for UUID generation';
 END $$;
@@ -70,7 +70,7 @@ BEGIN
     SELECT pg_database_size(current_database()) INTO total_size;
 
     -- Get cache hit ratio
-    SELECT round((blks_hit::NUMERIC / (blks_hit + blks_read)) * 100, 2) INTO cache_hit_ratio
+    SELECT round((blks_hit::NUMERIC / NULLIF(blks_hit + blks_read, 0)) * 100, 2) INTO cache_hit_ratio
     FROM pg_stat_database
     WHERE datname = current_database();
 
@@ -150,19 +150,28 @@ $$ LANGUAGE plpgsql;
 -- Grant necessary permissions to the application user with principle of least privilege
 GRANT CREATE ON DATABASE jeex_idea TO jeex_user;
 GRANT ALL ON SCHEMA public TO jeex_user;
-GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO jeex_user;
 
--- Grant specific permissions on monitoring functions
+-- Grant specific permissions on monitoring functions only (not all functions)
 GRANT EXECUTE ON FUNCTION check_database_health() TO jeex_user;
 GRANT EXECUTE ON FUNCTION get_database_metrics() TO jeex_user;
 
--- Create admin user for maintenance operations
+-- Create admin user for maintenance operations (optional for development)
 DO $$
+DECLARE
+    admin_password TEXT;
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'jeex_admin') THEN
-        CREATE ROLE jeex_admin LOGIN PASSWORD 'jeex_admin_secure_password_change_me';
-        GRANT ALL PRIVILEGES ON DATABASE jeex_idea TO jeex_admin;
-        RAISE NOTICE 'Created jeex_admin user for maintenance operations';
+        -- Get admin password from environment (optional)
+        admin_password := current_setting('app.jeex_admin_password', true);
+
+        IF admin_password IS NOT NULL THEN
+            -- Create admin user with password from environment
+            EXECUTE format($f$CREATE ROLE jeex_admin LOGIN PASSWORD %L$f$, admin_password);
+            GRANT ALL PRIVILEGES ON DATABASE jeex_idea TO jeex_admin;
+            RAISE NOTICE 'Created jeex_admin user for maintenance operations';
+        ELSE
+            RAISE NOTICE 'jeex_admin password not set (app.jeex_admin_password environment variable optional in development)';
+        END IF;
     ELSE
         RAISE NOTICE 'jeex_admin user already exists';
     END IF;
@@ -172,9 +181,15 @@ END $$;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'jeex_readonly') THEN
-        CREATE ROLE jeex_readonly LOGIN PASSWORD 'jeex_readonly_secure_password_change_me';
-        -- No grants yet - will be granted after tables are created
-        RAISE NOTICE 'Created jeex_readonly user for reporting operations';
+        -- Check if readonly password is set in environment
+        IF current_setting('app.jeex_readonly_password', true) IS NULL THEN
+            RAISE NOTICE 'jeex_readonly password not set (app.jeex_readonly_password environment variable optional)';
+        ELSE
+            -- Create readonly user with password from environment
+            EXECUTE format($f$CREATE ROLE jeex_readonly LOGIN PASSWORD %L$f$, current_setting('app.jeex_readonly_password'));
+            -- No grants yet - will be granted after tables are created
+            RAISE NOTICE 'Created jeex_readonly user for reporting operations';
+        END IF;
     ELSE
         RAISE NOTICE 'jeex_readonly user already exists';
     END IF;
@@ -209,7 +224,7 @@ BEGIN
     FROM pg_stat_activity;
 
     -- Basic performance check
-    SELECT round((blks_hit::NUMERIC / (blks_hit + blks_read)) * 100, 2) INTO cache_hit_ratio
+    SELECT round((blks_hit::NUMERIC / NULLIF(blks_hit + blks_read, 0)) * 100, 2) INTO cache_hit_ratio
     FROM pg_stat_database
     WHERE datname = current_database();
 
@@ -238,7 +253,7 @@ $$ LANGUAGE plpgsql;
 -- Log successful initialization
 \echo 'JEEX Idea PostgreSQL database initialized successfully'
 \echo 'Features enabled:'
-\echo '- UUID v7 support (gen_random_uuid)'
+\echo '- UUID v4 support (gen_random_uuid from pgcrypto)'
 \echo '- Performance monitoring (pg_stat_statements)'
 \echo '- Text search (pg_trgm)'
 \echo '- Cryptographic functions (pgcrypto)'
@@ -248,3 +263,7 @@ $$ LANGUAGE plpgsql;
 \echo '- TLS encryption with SSL certificates'
 \echo '- OpenTelemetry integration ready'
 \echo '- WAL archiving configured'
+\echo ''
+\echo 'Security note: User passwords must be set via environment variables:'
+\echo '- app.jeex_admin_password (required for admin user)'
+\echo '- app.jeex_readonly_password (optional for readonly user)'

@@ -7,15 +7,18 @@ Comprehensive database maintenance procedures with:
 - Statistics collection configuration
 - Database reorganization procedures
 - Project-scoped maintenance operations
+- SQL injection protection via safe identifier quoting
 """
 
 import asyncio
 import time
 import logging
+import re
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, AsyncGenerator
+from typing import Dict, Any, List, AsyncGenerator, Optional
 from dataclasses import dataclass, field
 from enum import Enum
+from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -27,6 +30,133 @@ from .database import database_manager
 from .monitoring import performance_monitor
 
 logger = structlog.get_logger()
+
+
+def _quote_ident(identifier: str) -> str:
+    """
+    Safely quote SQL identifiers to prevent SQL injection.
+
+    PostgreSQL identifier quoting rules:
+    - Wrap each part in double quotes separately
+    - Escape internal double quotes by doubling them
+    - Validate identifier contains only allowed characters
+    - Handle schema.table notation properly
+
+    Args:
+        identifier: The SQL identifier to quote (can include schema.table notation)
+
+    Returns:
+        Safely quoted identifier
+
+    Raises:
+        ValueError: If identifier contains invalid characters
+    """
+    if not identifier:
+        raise ValueError("Identifier cannot be empty")
+
+    # Validate identifier characters (allow letters, numbers, underscores, dots)
+    if not re.match(r"^[a-zA-Z0-9_.]+$", identifier):
+        raise ValueError(f"Invalid identifier: {identifier}")
+
+    # Split by dots for schema.table notation and quote each part separately
+    parts = identifier.split(".")
+    quoted_parts = []
+
+    for part in parts:
+        if not part:  # Empty part (e.g., "schema..table")
+            raise ValueError(f"Invalid identifier with empty part: {identifier}")
+
+        # Escape internal double quotes and wrap in double quotes
+        escaped = part.replace('"', '""')
+        quoted_parts.append(f'"{escaped}"')
+
+    return ".".join(quoted_parts)
+
+
+def _validate_table_name(table_name: str) -> None:
+    """
+    Validate table name to prevent SQL injection.
+
+    Args:
+        table_name: Table name to validate
+
+    Raises:
+        ValueError: If table name is invalid or potentially dangerous
+    """
+    if not table_name:
+        raise ValueError("Table name cannot be empty")
+
+    # Check for reasonable length first (PostgreSQL identifier limit)
+    if len(table_name) > 63:
+        raise ValueError(f"Table name too long: {table_name}")
+
+    # Prevent dangerous patterns - check these before character validation
+    dangerous_patterns = [
+        ";",
+        "--",
+        "/*",
+        "*/",
+        "GRANT",
+        "REVOKE",
+        "DROP",
+        "DELETE",
+        "UPDATE",
+        "INSERT",
+        "EXEC",
+        "MERGE",
+        "UNION",
+        "SELECT",
+        "CREATE",
+        "ALTER",
+        "TRUNCATE",
+        "OR",
+        "AND",
+        "LIKE",
+        "IN",
+        "EXISTS",
+        "BETWEEN",
+    ]
+
+    # Special handling for stored procedure prefixes
+    if table_name.startswith("xp_") or table_name.startswith("sp_"):
+        raise ValueError(
+            f"Dangerous stored procedure prefix detected in table name: {table_name}"
+        )
+
+    # Also check for quotes and other dangerous characters
+    dangerous_chars = ["'", '"', "\\", "\x00", "\n", "\r", "\t"]
+
+    upper_name = table_name.upper()
+
+    # Check for dangerous patterns
+    for pattern in dangerous_patterns:
+        if pattern in upper_name:
+            raise ValueError(
+                f"Dangerous pattern '{pattern}' detected in table name: {table_name}"
+            )
+
+    # Check for dangerous characters
+    for char in dangerous_chars:
+        if char in table_name:
+            raise ValueError(
+                f"Dangerous character '{char}' detected in table name: {table_name}"
+            )
+
+    # Allow only safe characters: letters, numbers, underscores, and dots
+    if not re.match(r"^[a-zA-Z0-9_.]+$", table_name):
+        raise ValueError(f"Invalid characters in table name: {table_name}")
+
+    # Validate each part of schema.table notation separately
+    parts = table_name.split(".")
+    for part in parts:
+        if not part:  # Empty part (e.g., "schema..table")
+            raise ValueError(f"Empty identifier part in table name: {table_name}")
+        if len(part) > 63:  # Each part also must respect identifier limit
+            raise ValueError(f"Identifier part too long in table name: {part}")
+
+
+# System project ID for background maintenance operations
+SYSTEM_PROJECT_ID = UUID("00000000-0000-0000-0000-000000000000")
 
 
 class MaintenanceType(Enum):
@@ -61,7 +191,7 @@ class MaintenanceTask:
     end_time: Optional[datetime]
     duration_seconds: float
     affected_rows: int
-    project_id: Optional[str]
+    project_id: UUID
     table_name: Optional[str]
     error_message: Optional[str] = None
     details: Dict[str, Any] = field(default_factory=dict)
@@ -104,6 +234,9 @@ class DatabaseMaintenance:
         self._maintenance_history: List[MaintenanceTask] = []
         self._maintenance_queue: List[MaintenanceTask] = []
         self._maintenance_lock = asyncio.Lock()
+        self._concurrency_sem = asyncio.Semaphore(
+            self.config.max_concurrent_maintenance
+        )
 
         # Setup Prometheus metrics
         self._setup_prometheus_metrics()
@@ -155,35 +288,12 @@ class DatabaseMaintenance:
 
     async def _configure_postgresql_maintenance(self) -> None:
         """Configure PostgreSQL for optimal maintenance operations."""
-        try:
-            async with database_manager.get_session() as session:
-                # Configure autovacuum settings
-                await session.execute(
-                    text("""
-                    ALTER SYSTEM SET autovacuum = on;
-                    ALTER SYSTEM SET autovacuum_vacuum_scale_factor = 0.1;
-                    ALTER SYSTEM SET autovacuum_analyze_scale_factor = 0.05;
-                    ALTER SYSTEM SET autovacuum_vacuum_cost_delay = '10ms';
-                    ALTER SYSTEM SET autovacuum_vacuum_cost_limit = 200;
-                    ALTER SYSTEM SET autovacuum_naptime = '1min';
-                """)
-                )
-
-                # Configure maintenance work memory
-                await session.execute(
-                    text("""
-                    ALTER SYSTEM SET maintenance_work_mem = '256MB';
-                """)
-                )
-
-                # Reload configuration
-                await session.execute(text("SELECT pg_reload_conf()"))
-
-                logger.info("PostgreSQL maintenance settings configured")
-
-        except Exception as e:
-            logger.error("Failed to configure PostgreSQL maintenance", error=str(e))
-            raise
+        # NOTE: Applications should NOT use ALTER SYSTEM - these are cluster-wide settings
+        # that require database administrator privileges. Maintenance operations should
+        # work with existing database configuration.
+        logger.info(
+            "PostgreSQL maintenance configuration skipped - using existing cluster settings"
+        )
 
     async def _start_maintenance_scheduler(self) -> None:
         """Start background maintenance scheduler."""
@@ -233,22 +343,30 @@ class DatabaseMaintenance:
             for table_info in analysis_results:
                 if table_info["needs_vacuum"] and self.config.auto_vacuum_enabled:
                     await self._schedule_maintenance(
-                        MaintenanceType.VACUUM, table_name=table_info["table_name"]
+                        MaintenanceType.VACUUM,
+                        SYSTEM_PROJECT_ID,
+                        table_info["table_name"],
                     )
 
                 if table_info["needs_analyze"] and self.config.auto_analyze_enabled:
                     await self._schedule_maintenance(
-                        MaintenanceType.ANALYZE, table_name=table_info["table_name"]
+                        MaintenanceType.ANALYZE,
+                        SYSTEM_PROJECT_ID,
+                        table_info["table_name"],
                     )
 
                 if table_info["needs_reindex"]:
                     await self._schedule_maintenance(
-                        MaintenanceType.REINDEX, table_name=table_info["table_name"]
+                        MaintenanceType.REINDEX,
+                        SYSTEM_PROJECT_ID,
+                        table_info["table_name"],
                     )
 
                 if table_info["needs_vacuum_full"]:
                     await self._schedule_maintenance(
-                        MaintenanceType.VACUUM_FULL, table_name=table_info["table_name"]
+                        MaintenanceType.VACUUM_FULL,
+                        SYSTEM_PROJECT_ID,
+                        table_info["table_name"],
                     )
 
         except Exception as e:
@@ -335,13 +453,19 @@ class DatabaseMaintenance:
     ) -> Dict[str, Any]:
         """Get table and index bloat information."""
         try:
-            # Simplified bloat calculation
+            # Validate table name to prevent SQL injection
+            _validate_table_name(table_name)
+
+            # Safely quote the table identifier
+            quoted_table = _quote_ident(table_name)
+
+            # Use parameterized queries with safe identifier quoting
             result = await session.execute(
                 text(f"""
                 SELECT
-                    pg_size_pretty(pg_total_relation_size('{table_name}')) as total_size,
-                    pg_size_pretty(pg_relation_size('{table_name}')) as table_size,
-                    (pg_total_relation_size('{table_name}') - pg_relation_size('{table_name}')) as index_size
+                    pg_size_pretty(pg_total_relation_size({quoted_table})) as total_size,
+                    pg_size_pretty(pg_relation_size({quoted_table})) as table_size,
+                    (pg_total_relation_size({quoted_table}) - pg_relation_size({quoted_table})) as index_size
             """)
             )
             size_info = result.fetchone()
@@ -369,11 +493,11 @@ class DatabaseMaintenance:
     async def _schedule_maintenance(
         self,
         maintenance_type: MaintenanceType,
+        project_id: UUID,
         table_name: Optional[str] = None,
-        project_id: Optional[str] = None,
     ) -> str:
         """Schedule a maintenance operation."""
-        task_id = f"{maintenance_type.value}_{table_name or 'all'}_{int(time.time())}"
+        task_id = f"{maintenance_type.value}_{table_name or 'all'}_{uuid4().hex}"
 
         task = MaintenanceTask(
             task_id=task_id,
@@ -397,22 +521,23 @@ class DatabaseMaintenance:
 
         return task_id
 
+    async def _with_semaphore(self, task: MaintenanceTask) -> None:
+        """
+        Execute maintenance task with semaphore protection.
+
+        This wrapper ensures that the semaphore is acquired before task execution
+        and properly released even if the task fails.
+        """
+        async with self._concurrency_sem:
+            await self._execute_maintenance_task(task)
+
     async def _process_maintenance_queue(self) -> None:
         """Process queued maintenance tasks."""
         async with self._maintenance_lock:
-            # Check concurrent task limit
-            running_tasks = [
-                t
-                for t in self._current_tasks.values()
-                if t.status == MaintenanceStatus.RUNNING
-            ]
-            if len(running_tasks) >= self.config.max_concurrent_maintenance:
-                return
-
-            # Process next task
+            # Process next task if available
             if self._maintenance_queue:
                 task = self._maintenance_queue.pop(0)
-                asyncio.create_task(self._execute_maintenance_task(task))
+                asyncio.create_task(self._with_semaphore(task))
 
     async def _execute_maintenance_task(self, task: MaintenanceTask) -> None:
         """Execute a maintenance task."""
@@ -480,8 +605,12 @@ class DatabaseMaintenance:
         """Execute VACUUM operation."""
         async with database_manager.get_session(task.project_id) as session:
             if task.table_name:
-                # Vacuum specific table
-                await session.execute(text(f"VACUUM ANALYZE {task.table_name}"))
+                # Validate and safely quote table name
+                _validate_table_name(task.table_name)
+                quoted_table = _quote_ident(task.table_name)
+
+                # Vacuum specific table with safe identifier quoting
+                await session.execute(text(f"VACUUM ANALYZE {quoted_table}"))
                 task.details["affected_rows"] = 1  # Table count
             else:
                 # Vacuum all tables
@@ -494,7 +623,12 @@ class DatabaseMaintenance:
         """Execute ANALYZE operation."""
         async with database_manager.get_session(task.project_id) as session:
             if task.table_name:
-                await session.execute(text(f"ANALYZE {task.table_name}"))
+                # Validate and safely quote table name
+                _validate_table_name(task.table_name)
+                quoted_table = _quote_ident(task.table_name)
+
+                # Analyze specific table with safe identifier quoting
+                await session.execute(text(f"ANALYZE {quoted_table}"))
                 task.details["affected_rows"] = 1
             else:
                 await session.execute(text("ANALYZE"))
@@ -506,10 +640,18 @@ class DatabaseMaintenance:
         """Execute REINDEX operation."""
         async with database_manager.get_session(task.project_id) as session:
             if task.table_name:
-                result = await session.execute(text(f"REINDEX TABLE {task.table_name}"))
+                # Validate and safely quote table name
+                _validate_table_name(task.table_name)
+                quoted_table = _quote_ident(task.table_name)
+
+                # Reindex specific table with safe identifier quoting
+                result = await session.execute(text(f"REINDEX TABLE {quoted_table}"))
                 task.details["affected_rows"] = 1
             else:
-                result = await session.execute(text("REINDEX DATABASE jeex_idea"))
+                # Use current_database() to get current database dynamically instead of hardcoding
+                result = await session.execute(
+                    text("REINDEX DATABASE current_database()")
+                )
                 task.details["affected_rows"] = 1
 
             await session.commit()
@@ -518,13 +660,24 @@ class DatabaseMaintenance:
         """Execute VACUUM FULL operation."""
         async with database_manager.get_session(task.project_id) as session:
             if task.table_name:
-                await session.execute(text(f"VACUUM FULL {task.table_name}"))
+                # Validate and safely quote table name
+                _validate_table_name(task.table_name)
+                quoted_table = _quote_ident(task.table_name)
+
+                # VACUUM FULL specific table with safe identifier quoting
+                await session.execute(text(f"VACUUM FULL {quoted_table}"))
                 task.details["affected_rows"] = 1
             else:
-                # VACUUM FULL on all tables would require multiple statements
-                # This is a simplified implementation
-                await session.execute(text("VACUUM FULL pg_statistic"))
-                task.details["affected_rows"] = 1
+                # DANGEROUS: VACUUM FULL on system catalog removed for safety
+                # Instead, we'll log a warning and suggest manual intervention
+                logger.warning(
+                    "VACUUM FULL on all tables not performed automatically for safety. "
+                    "Manual intervention required for table-level VACUUM FULL operations."
+                )
+                raise NotImplementedError(
+                    "VACUUM FULL on all tables requires manual execution "
+                    "due to potential for system catalog corruption"
+                )
 
             await session.commit()
 
@@ -532,8 +685,16 @@ class DatabaseMaintenance:
         """Execute CLUSTER operation."""
         async with database_manager.get_session(task.project_id) as session:
             if task.table_name:
-                await session.execute(text(f"CLUSTER {task.table_name}"))
+                # Validate and safely quote table name
+                _validate_table_name(task.table_name)
+                quoted_table = _quote_ident(task.table_name)
+
+                # CLUSTER specific table with safe identifier quoting
+                await session.execute(text(f"CLUSTER {quoted_table}"))
                 task.details["affected_rows"] = 1
+            else:
+                logger.warning("CLUSTER requires a specific table name")
+                raise ValueError("CLUSTER operation requires a specific table name")
 
             await session.commit()
 
@@ -575,14 +736,15 @@ class DatabaseMaintenance:
                 )
 
             stats = result.fetchall()
-            task.details["table_statistics"] = [dict(row) for row in stats]
+            # Use SQLAlchemy 2.x compatible row conversion
+            task.details["table_statistics"] = [dict(row._mapping) for row in stats]
             task.details["affected_rows"] = len(stats)
 
     async def run_maintenance(
         self,
         maintenance_type: MaintenanceType,
+        project_id: UUID,
         table_name: Optional[str] = None,
-        project_id: Optional[str] = None,
     ) -> MaintenanceTask:
         """
         Manually run a maintenance operation.
@@ -590,13 +752,20 @@ class DatabaseMaintenance:
         Args:
             maintenance_type: Type of maintenance to run
             table_name: Optional specific table
-            project_id: Optional project ID for scoping
+            project_id: Required project ID for scoping
 
         Returns:
             MaintenanceTask: Task information and status
         """
+        # Ensure scheduler is running to prevent hanging
+        await self._start_maintenance_scheduler()
+
+        # Validate table name if provided
+        if table_name:
+            _validate_table_name(table_name)
+
         task_id = await self._schedule_maintenance(
-            maintenance_type, table_name, project_id
+            maintenance_type, project_id, table_name
         )
 
         # Wait for task to complete (with timeout)
@@ -638,11 +807,17 @@ class DatabaseMaintenance:
             if t.status == MaintenanceStatus.COMPLETED
         ]
 
-        if recent_tasks:
-            avg_duration = sum(t.duration_seconds for t in recent_tasks) / len(
-                recent_tasks
+        # Count total considered tasks and successful tasks
+        considered = len(self._maintenance_history[-100:])  # Total tasks considered
+        successes = len(recent_tasks)  # Successful tasks (COMPLETED status)
+
+        if considered > 0:
+            avg_duration = (
+                sum(t.duration_seconds for t in recent_tasks) / len(recent_tasks)
+                if recent_tasks
+                else 0
             )
-            success_rate = len(recent_tasks) / 100  # Assuming we checked last 100
+            success_rate = successes / considered
         else:
             avg_duration = 0
             success_rate = 1.0
