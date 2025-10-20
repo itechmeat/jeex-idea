@@ -79,14 +79,13 @@ services:
       POSTGRES_DB: jeex_idea
       POSTGRES_USER: jeex_user
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jeex_secure_password}
-      # Additional PostgreSQL configuration
-      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
-      # Performance tuning for development
-      # Note: shared_preload_libraries configured in init-db.sql for consistency
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C --auth-host=scram-sha-256 --auth-local=scram-sha-256"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init-db.sql:/docker-entrypoint-initdb.d/01-init-db.sql:ro
-      - ./docker/postgres/pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf:ro
+      - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./docker/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./docker/postgres/ssl:/docker-entrypoint-initdb.d/ssl:ro
     healthcheck:
       <<: *common-healthcheck
       test: ["CMD-SHELL", "pg_isready -U jeex_user -d jeex_idea"]
@@ -96,11 +95,17 @@ services:
     command:
       - "postgres"
       - "-c"
-      - "shared_preload_libraries=pg_stat_statements"
+      - "config_file=/etc/postgresql/postgresql.conf"
+      - "-c"
+      - "hba_file=/etc/postgresql/pg_hba.conf"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements,auto_explain"
       - "-c"
       - "track_activity_query_size=2048"
       - "-c"
       - "log_min_duration_statement=1000"
+      - "-c"
+      - "password_encryption=scram-sha-256"
     deploy:
       resources:
         limits:
@@ -219,7 +224,7 @@ services:
     environment:
       <<: *common-variables
       # Database configuration
-      DATABASE_URL: postgresql://jeex_user:${POSTGRES_PASSWORD:-jeex_secure_password}@postgres:5432/jeex_idea
+      DATABASE_URL: postgresql+asyncpg://jeex_user:${POSTGRES_PASSWORD:-jeex_secure_password}@postgres:5432/jeex_idea
       DATABASE_POOL_SIZE: 10
       DATABASE_MAX_OVERFLOW: 20
 
@@ -242,6 +247,9 @@ services:
       SECRET_KEY: ${JWT_SECRET_KEY:-jeex_development_secret_key_change_in_production}
       CORS_ORIGINS: http://localhost:5200,http://localhost:3000
       CORS_CREDENTIALS: true
+
+      # Backup configuration
+      BACKUP_ENCRYPTION: ${BACKUP_ENCRYPTION:-false}
 
       # OpenTelemetry configuration
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317

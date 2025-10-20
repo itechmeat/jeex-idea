@@ -60,6 +60,7 @@ make dev-logs
 The Docker environment follows the Variant A architecture with three isolated networks:
 
 ### Networks
+
 - **jeex-frontend**: Frontend-to-backend communication
 - **jeex-backend**: Internal service-to-service communication
 - **jeex-data**: Database and cache service isolation
@@ -111,14 +112,15 @@ make db-reset          # Reset database (WARNING: deletes data)
 
 After starting the environment, you can access services at:
 
-- **API**: http://localhost:5210
-- **API Documentation**: http://localhost:5210/docs
-- **OpenTelemetry Metrics**: http://localhost:8888/metrics
-- **Qdrant Web UI**: http://localhost:5230/dashboard
+- **API**: <http://localhost:5210>
+- **API Documentation**: <http://localhost:5210/docs>
+- **OpenTelemetry Metrics**: <http://localhost:8888/metrics>
+- **Qdrant Web UI**: <http://localhost:5230/dashboard>
 
 ### Database Access
 
 **PostgreSQL Connection:**
+
 - Host: localhost
 - Port: 5220
 - Database: jeex_idea
@@ -126,10 +128,12 @@ After starting the environment, you can access services at:
 - Password: (from .env file)
 
 **Redis Connection:**
+
 - Host: localhost
 - Port: 5240
 
 **Qdrant Connection:**
+
 - Host: localhost
 - Port: 5230
 
@@ -142,11 +146,13 @@ The API service supports hot reload for rapid development. Changes to the backen
 ### Health Monitoring
 
 All services include health checks that verify:
+
 - Service is running and responsive
 - Dependencies are available
 - Configuration is valid
 
 Health status can be viewed with:
+
 ```bash
 docker-compose ps
 make dev-status
@@ -155,6 +161,7 @@ make dev-status
 ### Logging
 
 Structured logging is configured for all services:
+
 - Application logs flow to OpenTelemetry collector
 - Container logs are accessible via `docker-compose logs`
 - Log levels are configurable via environment variables
@@ -211,6 +218,7 @@ services:
 ### Port Conflicts
 
 If ports are already in use:
+
 ```bash
 # Check what's using the ports
 lsof -i :5220
@@ -222,6 +230,7 @@ lsof -i :5240
 ### Permission Issues
 
 If you encounter permission errors:
+
 ```bash
 # Reset permissions on volumes
 docker-compose down
@@ -232,6 +241,7 @@ docker-compose up --build
 ### Health Check Failures
 
 If services fail health checks:
+
 ```bash
 # Check specific service logs
 make dev-logs-service SERVICE=postgres
@@ -246,9 +256,11 @@ docker-compose restart postgres
 ### Performance Issues
 
 If the environment is slow:
+
 1. Increase Docker memory allocation (recommended: 4GB+)
 2. Check Docker Desktop resource limits
 3. Monitor container resource usage:
+
    ```bash
    docker stats
    ```
@@ -256,12 +268,14 @@ If the environment is slow:
 ## Data Persistence
 
 Data is persisted across container restarts using named volumes:
+
 - `jeex-postgres-data`: PostgreSQL data
 - `jeex-qdrant-data`: Vector database data
 - `jeex-redis-data`: Cache data
 - `jeex-otel-logs`: OpenTelemetry logs
 
 To backup data:
+
 ```bash
 # Database backup
 make db-backup

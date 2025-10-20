@@ -100,3 +100,6 @@ playwright-report/
 # Review reports (generated dynamically)
 reviews/*
 !reviews/README.md
+
+# AI assistant local settings
+.ai/settings.local.json

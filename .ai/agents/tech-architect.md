@@ -41,7 +41,7 @@ project-name/
 
 ## 2) Outputs (Definition)
 
-1. **Architecture Narrative** (`docs/architecture.md`) — Amazon 6-page style: _context → constraints → options → rationale → decisions._ Include **C4 diagrams** (Context, Containers, Components) in Mermaid.&#x20;
+1. **Architecture Narrative** (`docs/architecture.md`) — 6-page style: _context → constraints → options → rationale → decisions._ Include **C4 diagrams** (Context, Containers, Components) in Mermaid.&#x20;
 2. **ADR set** (`docs/adr/ADR-xxx-*.md`) — one ADR per key decision (DB model, project isolation, search filters, SSE design, OTel, resiliency, export).
 3. **API contracts (Schema-Driven)** — **Pydantic as single source of truth**: validation + API contracts + OpenAPI docs auto-generated. No schema duplication (manual validation, separate TypeScript types, or OpenAPI specs).
 4. **Data model & migrations (Schema-Driven)** — SQLAlchemy models as source of truth + **Alembic autogenerate** migrations. No manual migration writing (schema drift risk).

@@ -294,7 +294,7 @@ Launch agents in parallel for each issue type identified.
 
 **MANDATORY: Agents must generate structured reports for data-driven remediation**
 
-### Frontend Agent Artifacts:
+### Frontend Agent Artifacts
 
 ```bash
 # ESLint JSON report for structured error analysis
@@ -307,7 +307,7 @@ tsc --noEmit --pretty false > reports/typescript-errors.txt
 npx playwright test --reporter=html,junit --output-dir=reports/
 ```
 
-### Backend Agent Artifacts:
+### Backend Agent Artifacts
 
 ```bash
 # pytest JUnit XML + HTML reports for test failures
@@ -320,7 +320,7 @@ mypy . --xml-report reports/mypy-report/
 ruff check . --format=json --output-file=reports/ruff-report.json
 ```
 
-### QA Agent Artifacts:
+### QA Agent Artifacts
 
 ```bash
 # Ensure report directories exist

@@ -295,6 +295,7 @@ feat(auth): add OAuth2 authentication
 ### Primary Recommendation
 
 ```
+
 feat(auth): add OAuth2 authentication with Twitter provider
 
 Implement OAuth2 flow following RFC 6749 with:
@@ -307,12 +308,15 @@ Implement OAuth2 flow following RFC 6749 with:
 
 Closes #42
 Refs: stories/user-authentication/design.md
+
 ```
 
 ### Minimal Version (if body not needed)
 
 ```
+
 feat(auth): add OAuth2 authentication
+
 ```
 
 ---
@@ -427,6 +431,7 @@ Before suggesting, verify:
    ```
 
 3. **During story implementation:**
+
    ```bash
    /commit-suggest "Story: user-authentication, Task: 2.1"
    # Automatically includes story context
