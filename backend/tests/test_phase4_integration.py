@@ -19,7 +19,7 @@ import structlog
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
-from httpx import AsyncClient, Response
+from httpx import AsyncClient, Response, ASGITransport
 
 from app.main import app
 from app.db import init_database, get_database_session, close_database
@@ -37,15 +37,22 @@ settings = get_settings()
 @pytest.fixture(scope="session")
 async def test_database():
     """Initialize test database."""
-    await init_database()
+    await init_database(SYSTEM_PROJECT_ID)
     yield
     await close_database()
 
 
 @pytest.fixture
+def test_project_id():
+    """Generate test project ID."""
+    return uuid4()
+
+
+@pytest.fixture
 async def client(test_database) -> AsyncGenerator[AsyncClient, None]:
     """Create test client."""
-    async with AsyncClient(app=app, base_url="http://test") as ac:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
 
@@ -751,18 +758,28 @@ class TestIntegrationValidation:
         assert response.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_production_readiness_checklist(self, client: AsyncClient):
+    async def test_production_readiness_checklist(
+        self, client: AsyncClient, test_project: Project
+    ):
         """Test production readiness checklist validation."""
-        # Check all health endpoints
-        health_checks = [
+        # Check health endpoints without project_id
+        health_checks_without_project = [
             "/health",
-            "/ready",
-            "/database/health",
             "/database/metrics",
             "/database/monitoring/dashboard",
         ]
 
-        for endpoint in health_checks:
+        for endpoint in health_checks_without_project:
+            response = await client.get(endpoint)
+            assert response.status_code == 200, f"Health check failed for {endpoint}"
+
+        # Check health endpoints with project_id
+        health_checks_with_project = [
+            f"/ready?project_id={test_project.id}",
+            f"/database/health?project_id={test_project.id}",
+        ]
+
+        for endpoint in health_checks_with_project:
             response = await client.get(endpoint)
             assert response.status_code == 200, f"Health check failed for {endpoint}"
 

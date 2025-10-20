@@ -255,7 +255,11 @@ async def root():
 
 
 @app.get("/info")
-async def app_info():
+async def app_info(
+    project_id: Optional[UUID] = Query(
+        None, description="Optional project ID for project-scoped metrics"
+    ),
+):
     """
     Application information endpoint with Phase 3 system details.
 
@@ -266,11 +270,23 @@ async def app_info():
 
     # Get current database systems status
     try:
-        connection_metrics = await optimized_database.get_connection_metrics()
+        if project_id:
+            connection_metrics = await optimized_database.get_connection_metrics(
+                project_id
+            )
+        else:
+            # For general info endpoint without project_id, provide a summary message
+            connection_metrics = {
+                "message": "Project-specific metrics require project_id parameter"
+            }
         maintenance_status = await maintenance_manager.get_maintenance_status()
         backup_status = await backup_manager.get_backup_status()
     except Exception as e:
-        logger.warning("Failed to get system status for info endpoint", error=str(e))
+        logger.warning(
+            "Failed to get system status for info endpoint",
+            error=str(e),
+            project_id=project_id,
+        )
         connection_metrics = {"error": str(e)}
         maintenance_status = {"error": str(e)}
         backup_status = {"error": str(e)}
@@ -346,7 +362,7 @@ async def test_connections(project_id: UUID = Query(..., description="Project ID
         db_health = await optimized_database.get_comprehensive_health(project_id)
 
         # Test connection pool efficiency
-        connection_metrics = await optimized_database.get_connection_metrics()
+        connection_metrics = await optimized_database.get_connection_metrics(project_id)
 
         # Test performance monitoring system
         performance_dashboard = await performance_monitor.get_performance_dashboard(

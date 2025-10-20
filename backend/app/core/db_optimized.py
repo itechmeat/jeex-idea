@@ -112,10 +112,6 @@ class OptimizedDatabase:
                     "SET deadlock_timeout = '1s'",
                     # Logging and monitoring (session-safe)
                     "SET log_min_duration_statement = 1000",  # Log slow queries (>1s)
-                    "SET track_activities = on",
-                    "SET track_counts = on",
-                    "SET track_io_timing = on",
-                    "SET track_functions = pl",
                 ]
 
                 for optimization in optimizations:
@@ -243,7 +239,7 @@ class OptimizedDatabase:
 
             return {
                 "timestamp": datetime.utcnow().isoformat(),
-                "project_id": project_id,
+                "project_id": str(project_id),
                 "overall_status": "healthy"
                 if basic_health["status"] == "healthy"
                 else "unhealthy",
@@ -510,15 +506,16 @@ class OptimizedDatabase:
 
     async def get_connection_metrics(self, project_id: UUID) -> Dict[str, Any]:
         """Get detailed connection pool metrics."""
-        pool_metrics = await database_manager.get_metrics(project_id)
+        pool_metrics = await database_manager.get_metrics()
+        pool_hit_rate = pool_metrics.get("hit_rate", 0.0)
+        self._connection_metrics["pool_hit_rate"] = pool_hit_rate
         return {
             "connection_metrics": self._connection_metrics,
             "pool_metrics": pool_metrics,
             "pool_efficiency": self._calculate_pool_efficiency(pool_metrics),
             "requirements_satisfaction": {
                 "req_004_pool_management": True,  # Connection Pool Management
-                "perf_002_pool_efficiency": self._connection_metrics["pool_hit_rate"]
-                > 0.8,
+                "perf_002_pool_efficiency": pool_hit_rate > 0.8,
                 "pool_size_configured": True,
                 "max_overflow_configured": True,
                 "circuit_breaker_active": pool_metrics.get("circuit_breaker", {}).get(
@@ -540,8 +537,20 @@ class OptimizedDatabase:
 
         Returns:
             Backup operation results
+
+        Raises:
+            ValueError: If backup_type is invalid
+            NotImplementedError: If backup_type is not supported yet
         """
         from .backup import BackupType
+
+        # Validate backup_type before conversion
+        valid_types = [bt.value for bt in BackupType]
+        if backup_type not in valid_types:
+            raise ValueError(
+                f"Invalid backup_type '{backup_type}'. "
+                f"Must be one of: {', '.join(valid_types)}"
+            )
 
         backup_type_enum = BackupType(backup_type)
 

@@ -116,6 +116,7 @@ class ProjectRepository:
 
             self.session.add(project)
             await self.session.flush()  # Get the ID without committing
+            await self.session.commit()  # Persist the project to database
 
             # Log performance
             duration = (time.time() - start_time) * 1000

@@ -149,20 +149,29 @@ async def get_database_health(
 
 
 @router.get("/connections/metrics", response_model=ConnectionMetricsResponse)
-async def get_connection_metrics() -> ConnectionMetricsResponse:
+async def get_connection_metrics(
+    project_id: UUID = Query(
+        ..., description="Project ID for project-scoped connection metrics (required)"
+    ),
+) -> ConnectionMetricsResponse:
     """
-    Get detailed connection pool metrics and efficiency.
+    Get detailed connection pool metrics and efficiency for a specific project.
+
+    Args:
+        project_id: Required project ID for project-scoped connection metrics
 
     Returns:
-        Connection pool metrics and REQ-004 compliance status
+        Connection pool metrics and REQ-004 compliance status for the specified project
     """
     try:
-        metrics_data = await optimized_database.get_connection_metrics()
+        metrics_data = await optimized_database.get_connection_metrics(project_id)
 
         return ConnectionMetricsResponse(**metrics_data)
 
     except Exception as e:
-        logger.error("Failed to get connection metrics", error=str(e))
+        logger.error(
+            "Failed to get connection metrics", error=str(e), project_id=project_id
+        )
         raise HTTPException(
             status_code=500, detail=f"Failed to get connection metrics: {str(e)}"
         )
@@ -500,16 +509,33 @@ async def run_quick_performance_benchmark(
 
 
 @router.get("/metrics/prometheus")
-async def get_prometheus_metrics() -> Dict[str, Any]:
+async def get_prometheus_metrics(
+    project_id: Optional[UUID] = Query(
+        None, description="Optional project ID for project-scoped metrics"
+    ),
+) -> Dict[str, Any]:
     """
     Get Prometheus metrics for database monitoring.
+
+    Args:
+        project_id: Optional project ID for project-scoped metrics
 
     Returns:
         Prometheus-formatted metrics
     """
     try:
         # Get metrics from all monitoring systems
-        connection_metrics = await optimized_database.get_connection_metrics()
+        # For connection metrics, if project_id is provided, get project-specific metrics
+        # Otherwise, we'll need to handle this gracefully or require the parameter
+        if project_id:
+            connection_metrics = await optimized_database.get_connection_metrics(
+                project_id
+            )
+        else:
+            # For now, we'll need to require project_id since the function signature requires it
+            raise HTTPException(
+                status_code=400, detail="project_id is required for connection metrics"
+            )
         dashboard = await performance_monitor.get_performance_dashboard()
         maintenance_status = await maintenance_manager.get_maintenance_status()
 
@@ -527,7 +553,9 @@ async def get_prometheus_metrics() -> Dict[str, Any]:
         }
 
     except Exception as e:
-        logger.error("Failed to get Prometheus metrics", error=str(e))
+        logger.error(
+            "Failed to get Prometheus metrics", error=str(e), project_id=project_id
+        )
         raise HTTPException(
             status_code=500, detail=f"Failed to get Prometheus metrics: {str(e)}"
         )
@@ -645,8 +673,12 @@ async def get_database_systems_overview(
         overview = {
             "timestamp": datetime.utcnow().isoformat(),
             "systems": {
-                "connection_pool": await optimized_database.get_connection_metrics(),
-                "performance_monitoring": await performance_monitor.get_performance_dashboard(),
+                "connection_pool": await optimized_database.get_connection_metrics(
+                    project_id
+                ),
+                "performance_monitoring": await performance_monitor.get_performance_dashboard(
+                    project_id
+                ),
                 "maintenance": await maintenance_manager.get_maintenance_status(),
                 "backup": await backup_manager.get_backup_status(),
             },

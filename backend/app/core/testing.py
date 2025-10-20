@@ -18,7 +18,14 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
-import pytest
+
+# pytest is optional - only needed for running tests, not for monitoring endpoints
+try:
+    import pytest
+    PYTEST_AVAILABLE = True
+except ImportError:
+    PYTEST_AVAILABLE = False
+
 import asyncpg
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -189,7 +196,9 @@ class DatabaseTestSuite:
             test_project_id = uuid.uuid4()
 
             # Test 1: Connection pool configuration
-            pool_metrics = await optimized_database.get_connection_metrics()
+            pool_metrics = await optimized_database.get_connection_metrics(
+                test_project_id
+            )
             pool_config = pool_metrics["pool_metrics"]["metrics"]
 
             assert pool_config["total_connections"] >= 0, (
@@ -301,7 +310,7 @@ class DatabaseTestSuite:
                 await session.commit()
 
             # Test 3: Metrics collection
-            metrics = await optimized_database.get_connection_metrics()
+            metrics = await optimized_database.get_connection_metrics(test_project_id)
 
             assert "connection_metrics" in metrics, (
                 "Connection metrics should be collected"
@@ -457,7 +466,7 @@ class DatabaseTestSuite:
             # Test 2: Manual maintenance operations
             # Run ANALYZE operation
             analyze_task = await maintenance_manager.run_maintenance(
-                MaintenanceType.ANALYZE, project_id=str(test_project_id)
+                MaintenanceType.ANALYZE, project_id=test_project_id
             )
 
             assert analyze_task.status in ["completed", "running"], (
@@ -562,7 +571,13 @@ class DatabaseTestSuite:
 
             # Test 3: Performance monitoring settings
             async with optimized_database.get_session(test_project_id) as session3:
-                result = await session3.execute(text("SHOW log_min_duration_statement"))
+                result = await session3.execute(
+                    text("""
+                    SELECT setting::int * 1000
+                    FROM pg_settings
+                    WHERE name = 'log_min_duration_statement'
+                """)
+                )
                 log_min_duration = result.scalar()
 
                 assert int(log_min_duration) == self.settings.slow_query_threshold_ms()

@@ -649,7 +649,12 @@ class DatabaseMaintenance:
             else:
                 # Use current_database() to get current database dynamically instead of hardcoding
                 result = await session.execute(
-                    text("REINDEX DATABASE current_database()")
+                    text("""
+                    DO $$
+                    BEGIN
+                      EXECUTE format('REINDEX DATABASE %I', current_database());
+                    END $$;
+                    """)
                 )
                 task.details["affected_rows"] = 1
 

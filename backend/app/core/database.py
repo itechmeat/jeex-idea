@@ -407,9 +407,9 @@ class DatabaseManager:
             async with self.session_factory() as session:
                 # Set project context for monitoring
                 if project_id:
+                    app_name = f"jeex_idea_api_project_{project_id}"
                     await session.execute(
-                        text("SET LOCAL application_name = :app_name"),
-                        {"app_name": f"jeex_idea_api_project_{project_id}"},
+                        text(f"SET LOCAL application_name = '{app_name}'")
                     )
 
                 try:

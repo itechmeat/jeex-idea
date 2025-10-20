@@ -771,26 +771,42 @@ class Phase4TestRunner:
             total_tests = 0
             failed_tests = 0
             passed_tests = 0
+            skipped_tests = 0
+            error_tests = 0
+            xfailed_tests = 0
+            xpassed_tests = 0
 
-            # Look for pytest summary in output
+            # Look for pytest summary line using regex
+            import re
+
+            summary_found = False
             lines = stdout_str.split("\n")
             for line in lines:
-                if "=" in line and ("passed" in line or "failed" in line):
-                    # Parse line like: "5 passed, 2 failed in 10.5s"
-                    parts = line.split()
-                    for i, part in enumerate(parts):
-                        if part.isdigit():
-                            count = int(part)
-                            if i + 1 < len(parts):
-                                next_part = parts[i + 1]
-                                if "passed" in next_part:
-                                    passed_tests += count
-                                elif "failed" in next_part:
-                                    failed_tests += count
-                            total_tests += count
+                # Check if this line contains "in X.Xs" which indicates a pytest summary
+                if re.search(r"\s*in\s+[\d.]+s", line):
+                    summary_found = True
+                    # Use individual regex patterns to extract each test result
+                    passed_tests = self._extract_count(line, r"(\d+)\s*passed")
+                    failed_tests = self._extract_count(line, r"(\d+)\s*failed")
+                    skipped_tests = self._extract_count(line, r"(\d+)\s*skipped")
+                    error_tests = self._extract_count(line, r"(\d+)\s*error")
+                    xfailed_tests = self._extract_count(line, r"(\d+)\s*xfailed")
+                    xpassed_tests = self._extract_count(line, r"(\d+)\s*xpassed")
+                    # warnings are ignored for total count
+
+                    # Calculate total tests (sum of all test results except warnings)
+                    total_tests = (
+                        passed_tests
+                        + failed_tests
+                        + skipped_tests
+                        + error_tests
+                        + xfailed_tests
+                        + xpassed_tests
+                    )
+                    break
 
             # Fallback if parsing failed
-            if total_tests == 0:
+            if not summary_found or total_tests == 0:
                 if process.returncode == 0:
                     total_tests = passed_tests = 1  # Assume at least one test passed
                 else:
@@ -805,7 +821,15 @@ class Phase4TestRunner:
                 "details": {
                     "stdout": stdout_str,
                     "stderr": stderr_str,
-                    "summary": f"{passed_tests} passed, {failed_tests} failed in {duration:.2f}s",
+                    "summary": self._format_test_summary(
+                        passed_tests,
+                        failed_tests,
+                        skipped_tests,
+                        error_tests,
+                        xfailed_tests,
+                        xpassed_tests,
+                        duration,
+                    ),
                 },
             }
 
@@ -822,6 +846,45 @@ class Phase4TestRunner:
                     "summary": f"Failed to run pytest: {str(e)}",
                 },
             }
+
+    def _extract_count(self, line: str, pattern: str) -> int:
+        """Extract count from a line using regex pattern."""
+        import re
+
+        match = re.search(pattern, line)
+        return int(match.group(1)) if match else 0
+
+    def _format_test_summary(
+        self,
+        passed: int,
+        failed: int,
+        skipped: int,
+        errors: int,
+        xfailed: int,
+        xpassed: int,
+        duration: float,
+    ) -> str:
+        """Format test summary string with all test results."""
+        parts = []
+
+        if passed > 0:
+            parts.append(f"{passed} passed")
+        if failed > 0:
+            parts.append(f"{failed} failed")
+        if skipped > 0:
+            parts.append(f"{skipped} skipped")
+        if errors > 0:
+            parts.append(f"{errors} error{'s' if errors != 1 else ''}")
+        if xfailed > 0:
+            parts.append(f"{xfailed} xfailed")
+        if xpassed > 0:
+            parts.append(f"{xpassed} xpassed")
+
+        # If no tests found (fallback case)
+        if not parts:
+            parts.append("0 tests")
+
+        return f"{', '.join(parts)} in {duration:.2f}s"
 
 
 async def main():

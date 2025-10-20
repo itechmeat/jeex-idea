@@ -31,28 +31,31 @@ load_dotenv(
     find_dotenv() or os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
 )
 
-# Use environment variable for database URL or fallback to alembic.ini
-database_url = os.getenv("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+# Build database URL from environment variables (supports ${VAR} pattern that ConfigParser doesn't)
+# Priority: DATABASE_URL env var > constructed from individual vars > alembic.ini placeholder
+database_url = os.getenv("DATABASE_URL")
 
-# Validate database URL is present
 if not database_url:
-    raise ValueError(
-        "DATABASE_URL environment variable or sqlalchemy.url in alembic.ini is required but not set"
-    )
+    # Construct from individual environment variables
+    pg_user = os.getenv("POSTGRES_USER", "jeex_user")
+    pg_password = os.getenv("POSTGRES_PASSWORD", "")
+    pg_host = os.getenv("POSTGRES_HOST", "localhost")
+    pg_port = os.getenv("POSTGRES_PORT", "5220")
+    pg_db = os.getenv("POSTGRES_DB", "jeex_idea")
+
+    if pg_password:
+        database_url = (
+            f"postgresql://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_db}"
+        )
+    else:
+        raise ValueError(
+            "DATABASE_URL or POSTGRES_PASSWORD environment variable is required but not set"
+        )
 
 # Replace asyncpg driver with psycopg2 for migrations
 database_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
 
-# Expand all environment variables in the database URL
-import re
-
-env_vars = re.findall(r"\$\{([^}]+)\}", database_url)
-for var in env_vars:
-    value = os.getenv(var)
-    if value is None:
-        raise ValueError(f"Environment variable {var} is required but not set")
-    database_url = database_url.replace(f"${{{var}}}", value)
-
+# Override sqlalchemy.url in config with the dynamically constructed URL
 config.set_main_option("sqlalchemy.url", database_url)
 
 # Interpret the config file for Python logging.

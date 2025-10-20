@@ -48,13 +48,13 @@ async def test_database():
 @pytest.fixture
 def test_project_id():
     """Generate test project ID."""
-    return str(uuid.uuid4())
+    return uuid.uuid4()
 
 
 @pytest.fixture
 async def test_session(test_database, test_project_id):
     """Create test database session with project isolation."""
-    async with test_database.get_session(test_project_id) as session:
+    async with test_database.get_session(str(test_project_id)) as session:
         yield session
 
 
@@ -62,9 +62,9 @@ class TestConnectionPoolOptimization:
     """Test Task 3.1: Connection Pool Optimization."""
 
     @pytest.mark.asyncio
-    async def test_connection_pool_configuration(self, test_database):
+    async def test_connection_pool_configuration(self, test_database, test_project_id):
         """Test that connection pool is configured with optimal settings."""
-        metrics = await test_database.get_connection_metrics()
+        metrics = await test_database.get_connection_metrics(str(test_project_id))
 
         # Verify pool configuration meets REQ-004 requirements
         pool_config = metrics["pool_metrics"]["metrics"]
@@ -86,7 +86,7 @@ class TestConnectionPoolOptimization:
 
         async def test_connection():
             start_time = time.time()
-            async with test_database.get_session(test_project_id) as session:
+            async with test_database.get_session(str(test_project_id)) as session:
                 await session.execute(text("SELECT 1"))
             connection_times.append((time.time() - start_time) * 1000)
 
@@ -101,9 +101,9 @@ class TestConnectionPoolOptimization:
         )
 
     @pytest.mark.asyncio
-    async def test_circuit_breaker_functionality(self, test_database):
+    async def test_circuit_breaker_functionality(self, test_database, test_project_id):
         """Test circuit breaker pattern for database unavailability."""
-        metrics = await test_database.get_connection_metrics()
+        metrics = await test_database.get_connection_metrics(str(test_project_id))
 
         # Circuit breaker should be in operational state
         circuit_state = metrics["pool_metrics"]["circuit_breaker"]["state"]
@@ -120,12 +120,12 @@ class TestConnectionPoolOptimization:
         assert hasattr(settings, "database_pool_timeout"), (
             "Pool timeout should be configured"
         )
-        assert settings.database_pool_timeout > 0, "Pool timeout should be positive"
+        assert settings.database_pool_timeout() > 0, "Pool timeout should be positive"
 
     @pytest.mark.asyncio
-    async def test_pool_metrics_collection(self, test_database):
+    async def test_pool_metrics_collection(self, test_database, test_project_id):
         """Test comprehensive pool metrics collection."""
-        metrics = await test_database.get_connection_metrics()
+        metrics = await test_database.get_connection_metrics(str(test_project_id))
 
         required_metrics = [
             "connection_metrics",
@@ -150,14 +150,12 @@ class TestPerformanceMonitoring:
     async def test_slow_query_monitoring(self, test_database, test_project_id):
         """Test slow query detection and monitoring."""
         # Execute a query that will be tracked
-        async with test_database.get_session(test_project_id) as session:
+        async with test_database.get_session(str(test_project_id)) as session:
             await session.execute(text("SELECT pg_sleep(0.1)"))  # 100ms delay
             await session.commit()
 
         # Verify monitoring captured the query
-        dashboard = await performance_monitor.get_performance_dashboard(
-            uuid.UUID(test_project_id)
-        )
+        dashboard = await performance_monitor.get_performance_dashboard(test_project_id)
         assert "slow_queries" in dashboard, "Slow query monitoring should be active"
         assert "metrics" in dashboard, "Performance metrics should be available"
 
@@ -186,7 +184,7 @@ class TestPerformanceMonitoring:
         """Test query performance analysis tools."""
         query = "SELECT 1 as test_value"
         analysis = await performance_monitor.analyze_query_performance(
-            query, uuid.UUID(test_project_id)
+            query, test_project_id
         )
 
         assert "query" in analysis, "Query should be included in analysis"
@@ -196,11 +194,9 @@ class TestPerformanceMonitoring:
     @pytest.mark.asyncio
     async def test_project_scoped_monitoring(self, test_database, test_project_id):
         """Test monitoring is properly scoped by project."""
-        dashboard = await performance_monitor.get_performance_dashboard(
-            uuid.UUID(test_project_id)
-        )
+        dashboard = await performance_monitor.get_performance_dashboard(test_project_id)
 
-        assert dashboard["project_id"] == test_project_id, (
+        assert dashboard["project_id"] == str(test_project_id), (
             "Monitoring should respect project scoping"
         )
 
@@ -211,11 +207,11 @@ class TestBackupRecovery:
     @pytest.mark.asyncio
     async def test_backup_creation(self, test_database, test_project_id):
         """Test automated backup schedule configuration."""
-        backup_result = await test_database.create_backup("full", test_project_id)
+        backup_result = await test_database.create_backup(str(test_project_id), "full")
 
         assert backup_result["backup_id"] is not None, "Backup should have an ID"
         assert backup_result["backup_type"] == "full", "Backup type should be correct"
-        assert backup_result["project_id"] == test_project_id, (
+        assert backup_result["project_id"] == str(test_project_id), (
             "Backup should be project-scoped"
         )
 
@@ -228,7 +224,7 @@ class TestBackupRecovery:
     async def test_backup_integrity_verification(self, test_database, test_project_id):
         """Test backup integrity verification."""
         # Create a backup first
-        backup_result = await test_database.create_backup("full", test_project_id)
+        backup_result = await test_database.create_backup(str(test_project_id), "full")
         backup_id = backup_result["backup_id"]
 
         # Test recovery
@@ -249,14 +245,16 @@ class TestBackupRecovery:
     async def test_wal_archiving(self, test_database):
         """Test WAL archiving for point-in-time recovery."""
         settings = get_settings()
-        assert settings.wal_archiving_enabled, "WAL archiving should be enabled"
-        assert settings.wal_retention_days > 0, "WAL retention should be configured"
+        assert settings.wal_archiving_enabled(), "WAL archiving should be enabled"
+        assert settings.wal_retention_days() > 0, "WAL retention should be configured"
 
     @pytest.mark.asyncio
     async def test_backup_encryption(self, test_database):
         """Test backup encryption for security."""
         settings = get_settings()
-        assert settings.backup_encryption_enabled, "Backup encryption should be enabled"
+        assert settings.backup_encryption_enabled(), (
+            "Backup encryption should be enabled"
+        )
 
     @pytest.mark.asyncio
     async def test_backup_schedule(self, test_database):
@@ -297,14 +295,14 @@ class TestMaintenanceProcedures:
         """Test manual maintenance operations."""
         # Run ANALYZE operation
         task = await maintenance_manager.run_maintenance(
-            MaintenanceType.ANALYZE, project_id=test_project_id
+            MaintenanceType.ANALYZE, project_id=str(test_project_id)
         )
 
         assert task.task_id is not None, "Maintenance task should have an ID"
         assert task.maintenance_type == MaintenanceType.ANALYZE, (
             "Task type should be correct"
         )
-        assert task.project_id == test_project_id, "Task should be project-scoped"
+        assert task.project_id == str(test_project_id), "Task should be project-scoped"
 
     @pytest.mark.asyncio
     async def test_index_maintenance(self, test_database):
@@ -346,9 +344,9 @@ class TestPostgreSQLOptimization:
         settings = get_settings()
 
         # Verify optimal pool settings
-        assert settings.database_pool_size == 20, "Pool size should be 20"
-        assert settings.database_max_overflow == 30, "Max overflow should be 30"
-        assert settings.database_pool_timeout == 30, "Pool timeout should be 30s"
+        assert settings.database_pool_size() == 20, "Pool size should be 20"
+        assert settings.database_max_overflow() == 30, "Max overflow should be 30"
+        assert settings.database_pool_timeout() == 30, "Pool timeout should be 30s"
 
     @pytest.mark.asyncio
     async def test_postgresql_configuration(self, test_session):
@@ -401,7 +399,7 @@ class TestComprehensiveTesting:
         while time.time() - start_time < test_duration:
             query_start = time.time()
             try:
-                async with test_database.get_session(test_project_id) as session:
+                async with test_database.get_session(str(test_project_id)) as session:
                     await session.execute(text("SELECT 1 as benchmark"))
                     await session.commit()
 
@@ -457,7 +455,7 @@ class TestComprehensiveTesting:
     @pytest.mark.asyncio
     async def test_requirements_compliance(self, test_database, test_project_id):
         """Test all Phase 3 requirements compliance."""
-        health = await test_database.get_comprehensive_health(test_project_id)
+        health = await test_database.get_comprehensive_health(str(test_project_id))
 
         # Check critical requirements
         assert health["optimizations"]["connection_pooling"]["status"] == "optimized", (
@@ -480,7 +478,7 @@ class TestAPIEndpoints:
     @pytest.mark.asyncio
     async def test_database_health_endpoint(self, test_database, test_project_id):
         """Test database health endpoint."""
-        health_data = await test_database.get_comprehensive_health(test_project_id)
+        health_data = await test_database.get_comprehensive_health(str(test_project_id))
 
         response = DatabaseHealthResponse(**health_data)
         assert response.overall_status in ["healthy", "unhealthy"], (
@@ -491,9 +489,9 @@ class TestAPIEndpoints:
         )
 
     @pytest.mark.asyncio
-    async def test_connection_metrics_endpoint(self, test_database):
+    async def test_connection_metrics_endpoint(self, test_database, test_project_id):
         """Test connection metrics endpoint."""
-        metrics_data = await test_database.get_connection_metrics()
+        metrics_data = await test_database.get_connection_metrics(str(test_project_id))
 
         response = ConnectionMetricsResponse(**metrics_data)
         assert response.connection_metrics, "Connection metrics should be available"
@@ -503,12 +501,12 @@ class TestAPIEndpoints:
     @pytest.mark.asyncio
     async def test_backup_creation_endpoint(self, test_database, test_project_id):
         """Test backup creation endpoint."""
-        backup_data = await test_database.create_backup("full", test_project_id)
+        backup_data = await test_database.create_backup(str(test_project_id), "full")
 
         response = BackupResponse(**backup_data)
         assert response.backup_id, "Backup ID should be present"
         assert response.backup_type == "full", "Backup type should be correct"
-        assert response.project_id == test_project_id, "Project ID should match"
+        assert response.project_id == str(test_project_id), "Project ID should match"
 
     @pytest.mark.asyncio
     async def test_performance_testing_endpoint(self, test_database):
@@ -532,7 +530,7 @@ async def test_full_phase3_integration(test_database):
     assert health["overall_status"] == "healthy", "Overall system should be healthy"
 
     # Test connection pool efficiency
-    metrics = await test_database.get_connection_metrics()
+    metrics = await test_database.get_connection_metrics(test_project_id)
     assert metrics["requirements_satisfaction"]["req_004_pool_management"], (
         "Connection pool management should work"
     )
@@ -544,7 +542,7 @@ async def test_full_phase3_integration(test_database):
     assert dashboard["timestamp"] is not None, "Performance monitoring should be active"
 
     # Test backup system
-    backup_result = await test_database.create_backup("full", test_project_id)
+    backup_result = await test_database.create_backup(test_project_id, "full")
     assert backup_result["backup_id"] is not None, "Backup system should work"
 
     # Test maintenance system

@@ -17,7 +17,9 @@ npm install -g markdownlint-cli2@0.18.1
 ## Configuration Files
 
 ### `.markdownlint.jsonc`
+
 Main configuration file that defines linting rules and exceptions:
+
 - Allows long lines (MD013: false) for URLs and code examples
 - Allows inline HTML (MD033: false) for enhanced documentation
 - Uses ATX style headers (# style)
@@ -25,7 +27,9 @@ Main configuration file that defines linting rules and exceptions:
 - Requires language specification in fenced code blocks
 
 ### `.markdownlint-cli2.jsonc`
+
 CLI-specific configuration that defines:
+
 - Config file path (`.markdownlint.jsonc`)
 - Ignore patterns for build artifacts, dependencies, and cache directories
 - File glob patterns for markdown files to process
@@ -33,6 +37,7 @@ CLI-specific configuration that defines:
 ## Makefile Commands
 
 ### `make markdown-lint`
+
 Run markdown linting checks on all markdown files in the project.
 
 ```bash
@@ -40,6 +45,7 @@ make markdown-lint
 ```
 
 ### `make markdown-fix`
+
 Automatically fix markdown formatting issues where possible.
 
 ```bash
@@ -56,6 +62,7 @@ Markdown linting is integrated into the main linting workflow:
 ## File Coverage
 
 The following markdown files are processed:
+
 - `*.md` (root level)
 - `docs/**/*.md`
 - `frontend/**/*.md`
@@ -66,6 +73,7 @@ The following markdown files are processed:
 ## Ignored Directories
 
 The following directories are ignored to avoid processing generated files and dependencies:
+
 - `node_modules/**`
 - `backend/**`
 - `frontend/node_modules/**`
@@ -84,34 +92,43 @@ The pre-commit hook (`.github/hooks/pre-commit`) automatically runs markdown lin
 ## Common Issues and Fixes
 
 ### Missing Language Specification
+
 **Error**: `MD040/fenced-code-language Fenced code blocks should have a language specified`
 
 **Fix**: Add language to code blocks:
+
 ````markdown
 <!-- Before -->
+
 ```
 code here
 ```
 
 <!-- After -->
+
 ```python
 code here
 ```
 ````
 
 ### Emphasis Used as Heading
+
 **Error**: `MD036/no-emphasis-as-heading Emphasis used instead of a heading`
 
 **Fix**: Use proper heading syntax:
+
 ```markdown
 <!-- Before -->
+
 **This is a heading**
 
 <!-- After -->
+
 ### This is a heading
 ```
 
 ### Trailing Newline
+
 **Error**: `MD047/single-trailing-newline Files should end with a single newline character`
 
 **Fix**: Add a single newline at the end of the file.

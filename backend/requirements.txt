@@ -60,17 +60,6 @@ asyncio-mqtt==0.16.2
 # Health check dependencies
 aiosqlite==0.21.0
 
-# Testing dependencies (moved to requirements for performance testing)
-pytest==8.3.4
-pytest-asyncio==1.2.0
-pytest-cov==7.0.0
-pytest-mock==3.14.0
-pytest-benchmark==5.1.0
-pytest-profiling==1.7.0
-
 # Security and validation
 cryptography==46.0.3
-
-# Code formatting and linting
-ruff==0.14.1
 

@@ -9,11 +9,16 @@ import pytest
 import asyncio
 import os
 import sys
+import logging
 from pathlib import Path
 
 # Add backend to path
 backend_path = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_path))
+
+# Configure logger for test output
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 
 @pytest.mark.asyncio

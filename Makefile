@@ -365,6 +365,7 @@ lint: ## Run all linting checks
 format: ## Format all code
 	@echo "✨ Formatting all code..."
 	@$(MAKE) backend-format
+	@$(MAKE) markdown-fix
 	@echo "✅ Code formatting completed"
 
 markdown-lint: ## Run markdown linting checks
@@ -386,11 +387,11 @@ markdown-lint: ## Run markdown linting checks
 markdown-fix: ## Fix markdown formatting issues
 	@echo "📋 Fixing markdown issues..."
 	@if command -v npx >/dev/null 2>&1; then \
-		npx markdownlint-cli2 --fix; \
+		npx markdownlint-cli2 --fix || echo "$(YELLOW)⚠ Some markdown issues could not be auto-fixed$(RESET)"; \
 	else \
 		echo "$(YELLOW)markdownlint-cli2 not available, trying global installation...$(RESET)"; \
 		if command -v markdownlint-cli2 >/dev/null 2>&1; then \
-			markdownlint-cli2 --fix; \
+			markdownlint-cli2 --fix || echo "$(YELLOW)⚠ Some markdown issues could not be auto-fixed$(RESET)"; \
 		else \
 			echo "$(RED)Error: markdownlint-cli2 not found$(RESET)"; \
 			echo "Install with: npm install -g markdownlint-cli2"; \

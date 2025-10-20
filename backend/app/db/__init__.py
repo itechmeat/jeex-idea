@@ -37,7 +37,7 @@ async def init_database(project_id: UUID) -> None:
     with circuit breaker, retry logic, and performance monitoring.
     """
     try:
-        await database_manager.initialize(project_id)
+        await database_manager.initialize()
         logger.info("Database initialized successfully for project: %s", project_id)
     except Exception as e:
         logger.exception("Failed to initialize database for project %s", project_id)

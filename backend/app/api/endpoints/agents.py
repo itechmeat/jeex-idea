@@ -145,7 +145,10 @@ class AgentExecutionRepository:
             # Log performance
             duration = (time.time() - start_time) * 1000
             await performance_monitor.log_query_performance(
-                "agent_execution_create", duration, True
+                "agent_execution_create",
+                duration,
+                project_id=execution_data.project_id,
+                success=True,
             )
 
             logger.info(
@@ -198,7 +201,10 @@ class AgentExecutionRepository:
             # Log performance
             duration = (time.time() - start_time) * 1000
             await performance_monitor.log_query_performance(
-                "agent_execution_get_by_id", duration, execution is not None
+                "agent_execution_get_by_id",
+                duration,
+                project_id=project_id,
+                success=execution is not None,
             )
 
             return execution
@@ -261,7 +267,7 @@ class AgentExecutionRepository:
             # Log performance
             duration = (time.time() - start_time) * 1000
             await performance_monitor.log_query_performance(
-                "agent_execution_list", duration, True
+                "agent_execution_list", duration, project_id=project_id, success=True
             )
 
             return list(executions), total
@@ -316,7 +322,7 @@ class AgentExecutionRepository:
             # Log performance
             duration = (time.time() - start_time) * 1000
             await performance_monitor.log_query_performance(
-                "agent_execution_update", duration, True
+                "agent_execution_update", duration, project_id=project_id, success=True
             )
 
             logger.info(
@@ -418,7 +424,7 @@ class AgentExecutionRepository:
             # Log performance
             duration = (time.time() - start_time) * 1000
             await performance_monitor.log_query_performance(
-                "agent_execution_metrics", duration, True
+                "agent_execution_metrics", duration, project_id=project_id, success=True
             )
 
             return {

@@ -178,8 +178,38 @@ class Settings(BaseSettings):
         default=7, ge=1, le=30, description="WAL retention period in days"
     )
     WAL_ARCHIVE_DIRECTORY: str = Field(
-        default="/var/lib/postgresql/wal_archive", description="WAL archive directory"
+        default="/var/lib/postgresql/wal_archive",
+        description="WAL archive directory - must exist and be writable",
     )
+
+    @field_validator("WAL_ARCHIVE_DIRECTORY")
+    @classmethod
+    def validate_wal_archive_directory(cls, v: str) -> str:
+        """Validate WAL archive directory exists and is writable.
+
+        Note: Only validates in production. In development, directory may not exist yet.
+        """
+        import os
+        from pathlib import Path
+
+        # Skip validation in test/development environments
+        env = os.getenv("ENVIRONMENT", "development")
+        if env in ("test", "development"):
+            return v
+
+        # In production, validate directory exists and is writable
+        path = Path(v)
+        if not path.exists():
+            raise ValueError(
+                f"WAL archive directory does not exist: {v}. "
+                "Create it or set WAL_ARCHIVE_DIRECTORY to an existing path."
+            )
+        if not path.is_dir():
+            raise ValueError(f"WAL archive path is not a directory: {v}")
+        if not os.access(path, os.W_OK):
+            raise ValueError(f"WAL archive directory is not writable: {v}")
+
+        return v
 
     # Development and debugging
     DEBUG: bool = Field(default=False, description="Enable debug mode")

@@ -17,21 +17,11 @@ POSTGRES_USER="${POSTGRES_USER:-jeex_user}"
 POSTGRES_DB="${POSTGRES_DB:-jeex_idea}"
 POSTGRES_PORT="${POSTGRES_PORT:-5220}"
 
-# Auto-detect Docker Compose command
-if command -v docker-compose >/dev/null 2>&1; then
-    COMPOSE="docker-compose"
-elif docker compose version >/dev/null 2>&1; then
-    COMPOSE="docker compose"
-else
-    log_error "Docker Compose not found"
-    exit 1
-fi
-
 # Test counters
 TESTS_PASSED=0
 TESTS_FAILED=0
 
-# Helper functions
+# Helper functions (defined before first use)
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -49,6 +39,16 @@ log_error() {
     echo -e "${RED}[FAIL]${NC} $1"
     ((TESTS_FAILED++))
 }
+
+# Auto-detect Docker Compose command (after helper functions defined)
+if command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE="docker-compose"
+elif docker compose version >/dev/null 2>&1; then
+    COMPOSE="docker compose"
+else
+    log_error "Docker Compose not found"
+    exit 1
+fi
 
 # Execute PostgreSQL command
 exec_psql() {
@@ -126,8 +126,8 @@ test_extensions() {
     extensions=("uuid-ossp" "pg_stat_statements" "pg_trgm" "pgcrypto")
 
     for ext in "${extensions[@]}"; do
-        # Safe SQL with proper quoting to prevent injection
-        if exec_psql "SELECT * FROM pg_extension WHERE extname = \$quote_literal('$ext')\$;" | grep -q "$ext"; then
+        # Safe SQL - extname is a known safe column, $ext is from our hardcoded array
+        if exec_psql "SELECT extname FROM pg_extension WHERE extname = '$ext';" | grep -q "$ext"; then
             log_success "Extension '$ext' is installed"
         else
             log_error "Extension '$ext' is not installed"
@@ -161,23 +161,23 @@ test_database_schema() {
 test_user_accounts() {
     log_info "Testing user accounts and permissions..."
 
-    # Check jeex_user using catalog query with safe quoting
-    if exec_psql "SELECT 1 FROM pg_roles WHERE rolname = \$quote_literal('$POSTGRES_USER')\$;" >/dev/null 2>&1; then
+    # Check jeex_user using catalog query - rolname is safe, $POSTGRES_USER is from our config
+    if exec_psql "SELECT 1 FROM pg_roles WHERE rolname = '$POSTGRES_USER';" >/dev/null 2>&1; then
         log_success "Application user '$POSTGRES_USER' exists"
     else
         log_error "Application user '$POSTGRES_USER' not found"
         return 1
     fi
 
-    # Check jeex_admin using catalog query with safe quoting
-    if exec_psql "SELECT 1 FROM pg_roles WHERE rolname = \$quote_literal('jeex_admin')\$;" >/dev/null 2>&1; then
+    # Check jeex_admin using catalog query - hardcoded value is safe
+    if exec_psql "SELECT 1 FROM pg_roles WHERE rolname = 'jeex_admin';" >/dev/null 2>&1; then
         log_success "Admin user 'jeex_admin' exists"
     else
         log_warning "Admin user 'jeex_admin' not found (may be created on first run)"
     fi
 
-    # Check jeex_readonly using catalog query with safe quoting
-    if exec_psql "SELECT 1 FROM pg_roles WHERE rolname = \$quote_literal('jeex_readonly')\$;" >/dev/null 2>&1; then
+    # Check jeex_readonly using catalog query - hardcoded value is safe
+    if exec_psql "SELECT 1 FROM pg_roles WHERE rolname = 'jeex_readonly';" >/dev/null 2>&1; then
         log_success "Read-only user 'jeex_readonly' exists"
     else
         log_warning "Read-only user 'jeex_readonly' not found (may be created on first run)"
