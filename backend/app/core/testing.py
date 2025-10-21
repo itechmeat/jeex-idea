@@ -22,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 # pytest is optional - only needed for running tests, not for monitoring endpoints
 try:
     import pytest
+
     PYTEST_AVAILABLE = True
 except ImportError:
     PYTEST_AVAILABLE = False

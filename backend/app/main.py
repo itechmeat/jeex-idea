@@ -28,6 +28,7 @@ from .core.db_optimized import optimized_database
 from .core.monitoring import performance_monitor
 from .core.maintenance import maintenance_manager
 from .core.backup import backup_manager
+from .core.vector import vector_database
 from .core.config import get_settings
 from .db import init_database, close_database
 from .api.endpoints.health import router as health_router
@@ -35,6 +36,7 @@ from .api.endpoints.database_monitoring import router as database_monitoring_rou
 from .api.endpoints.projects import router as projects_router
 from .api.endpoints.documents import router as documents_router
 from .api.endpoints.agents import router as agents_router
+from .api.endpoints.vector import router as vector_router
 
 # Configure structured logging
 logger = structlog.get_logger()
@@ -53,12 +55,16 @@ async def lifespan(app: FastAPI):
         # (includes database connection initialization via database_manager)
         await optimized_database.initialize()
 
+        # Initialize vector database with Qdrant
+        await vector_database.initialize()
+
         logger.info(
             "JEEX Idea API started successfully",
             version="0.1.0",
             environment=settings.ENVIRONMENT,
             phase_3_optimizations=True,
             phase_4_integration=True,
+            vector_database=True,
         )
 
     except Exception as e:
@@ -73,6 +79,9 @@ async def lifespan(app: FastAPI):
     try:
         # Cleanup all Phase 3 systems
         await optimized_database.cleanup()
+
+        # Cleanup vector database
+        await vector_database.cleanup()
 
         # Close database connections (Phase 4 integration)
         await close_database()
@@ -106,6 +115,7 @@ app.include_router(database_monitoring_router, tags=["database"])
 app.include_router(projects_router, tags=["projects"])
 app.include_router(documents_router, tags=["documents"])
 app.include_router(agents_router, tags=["agents"])
+app.include_router(vector_router, prefix="/api/v1/vector", tags=["vector"])
 
 # Application state
 app.state.startup_time = datetime.utcnow()
