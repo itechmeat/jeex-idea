@@ -1,4 +1,4 @@
-.PHONY: help setup verify-setup clean-setup lint lint-fix format check pre-commit markdown-lint markdown-fix backend-lint backend-fix backend-format sql-lint sql-fix security-scan dev dev-up dev-down dev-logs dev-shell dev-shell-service dev-restart dev-status verify-docker verify-postgresql dev-setup db-shell db-migrate db-migrate-create db-migrate-downgrade db-migrate-history db-migrate-current db-health db-metrics db-reset db-backup test test-backend test-phase4 test-phase4-integration test-phase4-rollback test-phase4-performance test-coverage test-quick docs
+.PHONY: help setup verify-setup clean-setup lint lint-fix format check pre-commit markdown-lint markdown-fix backend-lint backend-fix backend-format sql-lint sql-fix security-scan dev dev-up dev-down dev-logs dev-shell dev-shell-service dev-restart dev-status verify-docker verify-postgresql dev-setup db-shell db-migrate db-migrate-create db-migrate-downgrade db-migrate-history db-migrate-current db-health db-metrics db-reset db-backup qdrant-init qdrant-health qdrant-stats qdrant-reset qdrant-shell qdrant-logs test test-backend test-phase4 test-phase4-integration test-phase4-rollback test-phase4-performance test-coverage test-quick test-unit-vector test-integration-vector test-vector-all test-performance test-performance-quick test-performance-integration docs
 .DEFAULT_GOAL := help
 
 # Use bash for advanced shell features (read -p, [[ ... ]], etc.)
@@ -321,6 +321,76 @@ db-backup: ## Backup database
 	docker-compose exec postgres pg_dump -U jeex_user jeex_idea > backups/jeex-idea-backup-$$(date +%Y%m%d-%H%M%S).sql
 	@echo "$(GREEN)Backup created in backups/ directory$(RESET)"
 
+##@ Vector Database (Qdrant)
+
+qdrant-init: ## Initialize Qdrant collection and indexes
+	@echo "$(GREEN)Initializing Qdrant collection...$(RESET)"
+	@curl -s -X PUT "http://localhost:5230/collections/jeex_memory" \
+		-H "Content-Type: application/json" \
+		-d '{"vectors": {"size": 1536, "distance": "Cosine", "hnsw_config": {"m": 0, "payload_m": 16, "ef_construct": 100}}}' || echo "Collection may already exist"
+	@echo "$(YELLOW)Creating payload indexes...$(RESET)"
+	@# Create project_id index
+	@curl -s -X PUT "http://localhost:5230/collections/jeex_memory/index" \
+		-H "Content-Type: application/json" \
+		-d '{"field_name": "project_id", "field_schema": "keyword"}' || true
+	@# Create language index
+	@curl -s -X PUT "http://localhost:5230/collections/jeex_memory/index" \
+		-H "Content-Type: application/json" \
+		-d '{"field_name": "language", "field_schema": "keyword"}' || true
+	@# Create type index
+	@curl -s -X PUT "http://localhost:5230/collections/jeex_memory/index" \
+		-H "Content-Type: application/json" \
+		-d '{"field_name": "type", "field_schema": "keyword"}' || true
+	@# Create created_at index
+	@curl -s -X PUT "http://localhost:5230/collections/jeex_memory/index" \
+		-H "Content-Type: application/json" \
+		-d '{"field_name": "created_at", "field_schema": "datetime"}' || true
+	@# Create importance index
+	@curl -s -X PUT "http://localhost:5230/collections/jeex_memory/index" \
+		-H "Content-Type: application/json" \
+		-d '{"field_name": "importance", "field_schema": "float"}' || true
+	@echo "$(GREEN)Qdrant collection initialized$(RESET)"
+
+qdrant-health: ## Check Qdrant service and collection health
+	@echo "$(GREEN)Checking Qdrant health...$(RESET)"
+	@echo "$(YELLOW)Service Health:$(RESET)"
+	@curl -s http://localhost:5230/health | python3 -m json.tool || echo "Service unhealthy"
+	@echo ""
+	@echo "$(YELLOW)Collection Status:$(RESET)"
+	@curl -s http://localhost:5230/collections/jeex_memory | python3 -m json.tool || echo "Collection not found"
+
+qdrant-stats: ## Display collection statistics
+	@echo "$(GREEN)Qdrant collection statistics:$(RESET)"
+	@curl -s http://localhost:5230/collections/jeex_memory | python3 -c "import sys, json; data = json.load(sys.stdin); \
+result = data.get('result', {}); \
+print(f'Collection: {result.get(\"config\", {}).get(\"params\", {}).get(\"vectors\", {}).get(\"size\", \"unknown\")}D'); \
+print(f'Points: {result.get(\"points_count\", 0):,}'); \
+print(f'Segments: {result.get(\"segments_count\", 0)}'); \
+print(f'Disk Usage: {result.get(\"disk_data_size\", 0) / 1024 / 1024:.2f} MB'); \
+print(f'RAM Usage: {result.get(\"ram_data_size\", 0) / 1024 / 1024:.2f} MB'); \
+print(f'Status: {result.get(\"status\", \"unknown\")}') " || echo "Failed to get statistics"
+
+qdrant-reset: ## Delete and recreate collection (development only)
+	@echo "$(RED)WARNING: This will delete all vector data$(RESET)"
+	@read -p "Are you sure? [y/N] " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		echo "$(YELLOW)Deleting collection...$(RESET)"; \
+		curl -s -X DELETE http://localhost:5230/collections/jeex_memory || true; \
+		echo "$(GREEN)Recreating collection...$(RESET)"; \
+		make qdrant-init; \
+	else \
+		echo "$(YELLOW)Cancelled$(RESET)"; \
+	fi
+
+qdrant-shell: ## Open Python shell with Qdrant client initialized
+	@echo "$(GREEN)Opening Python shell with Qdrant client...$(RESET)"
+	@docker-compose exec api python3 -c "import sys; from qdrant_client import QdrantClient; client = QdrantClient(url='http://qdrant:6333'); print('Qdrant client initialized'); print('Available collections:', [c.name for c in client.get_collections().collections]); print('Use the client variable to interact with Qdrant'); print('Example: client.get_collection(\"jeex_memory\")'); print(''); (exec(open('/dev/tty').read()) if sys.stdin.isatty() else print('Non-interactive environment - connection info printed above'))"
+
+qdrant-logs: ## Tail Qdrant container logs
+	@echo "$(GREEN)Showing Qdrant container logs...$(RESET)"
+	@docker-compose logs -f --tail=100 qdrant
+
 test: ## Run all tests
 	@echo "$(GREEN)Running comprehensive test suite...$(RESET)"
 	@$(MAKE) lint
@@ -328,7 +398,7 @@ test: ## Run all tests
 
 test-backend: ## Run backend tests
 	@echo "$(GREEN)Running backend tests...$(RESET)"
-	@cd backend && python -m pytest tests/ -v
+	@cd backend && python3 -m pytest tests/ -v
 
 test-phase4: ## Run Phase 4 integration and testing suite
 	@echo "$(GREEN)Running Phase 4 Integration and Testing Suite...$(RESET)"
@@ -354,6 +424,19 @@ test-coverage: ## Run tests with coverage report
 test-quick: ## Run quick tests (excluding performance tests)
 	@echo "$(GREEN)Running quick tests...$(RESET)"
 	@cd backend && python -m pytest tests/ -v -k "not performance and not load"
+
+test-unit-vector: ## Run vector database unit tests
+	@echo "$(GREEN)Running vector database unit tests...$(RESET)"
+	@cd backend && source venv/bin/activate && python -m pytest tests/unit/services/vector/ -v
+
+test-integration-vector: ## Run vector database integration tests
+	@echo "$(GREEN)Running vector database integration tests...$(RESET)"
+	@cd backend && python -m pytest tests/integration/test_vector_integration.py -v
+
+test-vector-all: ## Run all vector database tests
+	@echo "$(GREEN)Running all vector database tests...$(RESET)"
+	@$(MAKE) test-unit-vector
+	@$(MAKE) test-integration-vector
 
 lint: ## Run all linting checks
 	@echo "🔍 Running all linting checks..."
@@ -470,6 +553,44 @@ security-scan: ## Run security scan with Bandit
 	@cd backend && mkdir -p reports && python -m bandit -r app/ -f json -o reports/bandit-report.json || true
 	@cd backend && python -m bandit -r app/
 	@echo "✅ Security scan completed!"
+
+##@ Performance Testing
+
+test-performance: ## Run comprehensive performance benchmark suite
+	@echo "$(GREEN)Running comprehensive vector database performance benchmarks...$(RESET)"
+	@echo ""
+	@if docker-compose ps qdrant | grep -q "Up"; then \
+		echo "$(GREEN)✓ Qdrant is running$(RESET)"; \
+	else \
+		echo "$(RED)✗ Qdrant is not running$(RESET)"; \
+		echo "Start Qdrant with: $(YELLOW)make qdrant-init$(RESET) or $(YELLOW)make dev-up$(RESET)"; \
+		exit 1; \
+	fi
+	@cd backend && python -m tests.performance.benchmark_runner
+
+test-performance-quick: ## Run quick performance benchmarks (CI/CD mode)
+	@echo "$(GREEN)Running quick performance benchmarks...$(RESET)"
+	@echo ""
+	@if docker-compose ps qdrant | grep -q "Up"; then \
+		echo "$(GREEN)✓ Qdrant is running$(RESET)"; \
+	else \
+		echo "$(RED)✗ Qdrant is not running$(RESET)"; \
+		echo "Start Qdrant with: $(YELLOW)make qdrant-init$(RESET) or $(YELLOW)make dev-up$(RESET)"; \
+		exit 1; \
+	fi
+	@cd backend && python -m tests.performance.benchmark_runner --quick
+
+test-performance-integration: ## Run performance framework integration tests
+	@echo "$(GREEN)Running performance framework integration tests...$(RESET)"
+	@echo ""
+	@if docker-compose ps qdrant | grep -q "Up"; then \
+		echo "$(GREEN)✓ Qdrant is running$(RESET)"; \
+	else \
+		echo "$(RED)✗ Qdrant is not running$(RESET)"; \
+		echo "Start Qdrant with: $(YELLOW)make qdrant-init$(RESET) or $(YELLOW)make dev-up$(RESET)"; \
+		exit 1; \
+	fi
+	@cd backend && python -m pytest tests/performance/test_performance_integration.py -v -m performance
 
 ##@ Documentation
 
