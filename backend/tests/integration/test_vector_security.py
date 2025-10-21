@@ -170,20 +170,38 @@ class VectorSecurityTester:
         """
         # Input validation
         if not project_id or not isinstance(project_id, str):
-            raise ValueError(f"project_id must be non-empty string, got: {type(project_id).__name__}")
+            raise ValueError(
+                f"project_id must be non-empty string, got: {type(project_id).__name__}"
+            )
         if not language or not isinstance(language, str):
-            raise ValueError(f"language must be non-empty string, got: {type(language).__name__}")
+            raise ValueError(
+                f"language must be non-empty string, got: {type(language).__name__}"
+            )
         if not vectors or not isinstance(vectors, list):
-            raise ValueError(f"vectors must be non-empty list, got: {type(vectors).__name__}")
+            raise ValueError(
+                f"vectors must be non-empty list, got: {type(vectors).__name__}"
+            )
 
         # Validate vector structure
-        required_keys = {"id", "vector", "content", "title", "type", "metadata", "importance"}
+        required_keys = {
+            "id",
+            "vector",
+            "content",
+            "title",
+            "type",
+            "metadata",
+            "importance",
+        }
         for idx, vector in enumerate(vectors):
             if not isinstance(vector, dict):
-                raise ValueError(f"Vector at index {idx} must be dict, got: {type(vector).__name__}")
+                raise ValueError(
+                    f"Vector at index {idx} must be dict, got: {type(vector).__name__}"
+                )
             missing_keys = required_keys - set(vector.keys())
             if missing_keys:
-                raise ValueError(f"Vector at index {idx} missing required keys: {missing_keys}")
+                raise ValueError(
+                    f"Vector at index {idx} missing required keys: {missing_keys}"
+                )
 
         api_vectors = []
         for vector in vectors:
@@ -241,60 +259,61 @@ class VectorSecurityTester:
         if language:
             params["language"] = language
 
-        response = await self.client.post(
-            "/api/v1/vector/search",
-            json={
-                "query_vector": query_vector,
-                "limit": 100,  # High limit to detect any leakage
-            },
-            params=params,
-        )
+        try:
+            response = await self.client.post(
+                "/api/v1/vector/search",
+                json={
+                    "query_vector": query_vector,
+                    "limit": 100,  # High limit to detect any leakage
+                },
+                params=params,
+            )
 
-        # Raise to convert 4xx/5xx into HTTPStatusError
-        response.raise_for_status()
+            # Raise to convert 4xx/5xx into HTTPStatusError
+            response.raise_for_status()
 
-        if expected_success:
-            return response.json()
-        # Unexpected success: this should have been blocked
-        security_event = {
-            "type": "UNAUTHORIZED_ACCESS",
-            "description": description,
-            "project_id": project_id,
-            "language": language,
-            "response_status": response.status_code,
-            "response_data": response.json(),
-            "timestamp": asyncio.get_event_loop().time(),
-        }
-        self.security_events.append(security_event)
-        return {"error": "Unexpected success", "response": response.json()}
-
-    except httpx.HTTPStatusError as e:
-        if not expected_success:
-            # Expected failure - record as proper security measure
+            if expected_success:
+                return response.json()
+            # Unexpected success: this should have been blocked
             security_event = {
-                "type": "PROPERLY_BLOCKED",
+                "type": "UNAUTHORIZED_ACCESS",
                 "description": description,
                 "project_id": project_id,
                 "language": language,
-                "response_status": e.response.status_code,
-                "error": e.response.text,
+                "response_status": response.status_code,
+                "response_data": response.json(),
                 "timestamp": asyncio.get_event_loop().time(),
             }
             self.security_events.append(security_event)
-            return {"error": "Properly blocked", "status": e.response.status_code}
-        else:
-            # Unexpected failure
-            security_event = {
-                "type": "UNEXPECTED_FAILURE",
-                "description": description,
-                "project_id": project_id,
-                "language": language,
-                "response_status": e.response.status_code,
-                "error": e.response.text,
-                "timestamp": asyncio.get_event_loop().time(),
-            }
-            self.security_events.append(security_event)
-            raise
+            return {"error": "Unexpected success", "response": response.json()}
+
+        except httpx.HTTPStatusError as e:
+            if not expected_success:
+                # Expected failure - record as proper security measure
+                security_event = {
+                    "type": "PROPERLY_BLOCKED",
+                    "description": description,
+                    "project_id": project_id,
+                    "language": language,
+                    "response_status": e.response.status_code,
+                    "error": e.response.text,
+                    "timestamp": asyncio.get_event_loop().time(),
+                }
+                self.security_events.append(security_event)
+                return {"error": "Properly blocked", "status": e.response.status_code}
+            else:
+                # Unexpected failure
+                security_event = {
+                    "type": "UNEXPECTED_FAILURE",
+                    "description": description,
+                    "project_id": project_id,
+                    "language": language,
+                    "response_status": e.response.status_code,
+                    "error": e.response.text,
+                    "timestamp": asyncio.get_event_loop().time(),
+                }
+                self.security_events.append(security_event)
+                raise
 
     async def test_filter_bypass_attempts(self) -> List[Dict[str, Any]]:
         """
@@ -379,10 +398,10 @@ class VectorSecurityTester:
             except Exception as e:
                 logger.exception(
                     "Bypass attempt failed (expected behavior)",
-                    description=attempt['description'],
-                    project_id=attempt['project_id'],
-                    language=attempt['language'],
-                    exc_info=True
+                    description=attempt["description"],
+                    project_id=attempt["project_id"],
+                    language=attempt["language"],
+                    exc_info=True,
                 )
                 # Re-raise to ensure test failures are visible
                 raise
@@ -562,7 +581,7 @@ class VectorSecurityTester:
                 logger.debug(
                     "Cleanup delete failed (expected due to isolation)",
                     point_id=point_id,
-                    error=str(e)
+                    error=str(e),
                 )
                 # Cleanup failures are expected due to isolation
 
@@ -748,7 +767,9 @@ async def test_injection_protection(vector_security_tester, security_test_data):
     ]
 
     # Should have blocked injection attempts or properly handled them
-    assert len(injection_events) >= 1, "At least one injection attempt should have been recorded/blocked"
+    assert len(injection_events) >= 1, (
+        "At least one injection attempt should have been recorded/blocked"
+    )
 
     logger.info(
         "Injection protection test passed",

@@ -1,4 +1,4 @@
-.PHONY: help setup verify-setup clean-setup lint lint-fix format check pre-commit markdown-lint markdown-fix backend-lint backend-fix backend-format sql-lint sql-fix security-scan dev dev-up dev-down dev-logs dev-shell dev-shell-service dev-restart dev-status verify-docker verify-postgresql dev-setup db-shell db-migrate db-migrate-create db-migrate-downgrade db-migrate-history db-migrate-current db-health db-metrics db-reset db-backup qdrant-init qdrant-health qdrant-stats qdrant-reset qdrant-shell qdrant-logs test test-backend test-phase4 test-phase4-integration test-phase4-rollback test-phase4-performance test-coverage test-quick test-unit-vector test-integration-vector test-vector-all test-performance test-performance-quick test-performance-integration docs
+.PHONY: help setup verify-setup clean-setup lint lint-fix format check pre-commit markdown-lint markdown-fix backend-lint backend-fix backend-format sql-lint sql-fix security-scan dev dev-up dev-down dev-logs dev-shell dev-shell-service dev-restart dev-status verify-docker verify-postgresql dev-setup db-shell db-migrate db-migrate-create db-migrate-downgrade db-migrate-history db-migrate-current db-health db-metrics db-reset db-backup qdrant-init qdrant-health qdrant-stats qdrant-reset qdrant-shell qdrant-logs redis-health redis-stats redis-shell redis-logs redis-cli test test-backend test-phase4 test-phase4-integration test-phase4-rollback test-phase4-performance test-coverage test-quick test-unit-vector test-integration-vector test-vector-all test-performance test-performance-quick test-performance-integration docs
 .DEFAULT_GOAL := help
 
 # Use bash for advanced shell features (read -p, [[ ... ]], etc.)
@@ -390,6 +390,43 @@ qdrant-shell: ## Open Python shell with Qdrant client initialized
 qdrant-logs: ## Tail Qdrant container logs
 	@echo "$(GREEN)Showing Qdrant container logs...$(RESET)"
 	@docker-compose logs -f --tail=100 qdrant
+
+##@ Redis Cache and Queue Service
+
+redis-health: ## Check Redis service health and connectivity
+	@echo "$(GREEN)Checking Redis health...$(RESET)"
+	@echo "$(YELLOW)Service Health:$(RESET)"
+	@docker-compose exec redis redis-cli -a $${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production} ping || echo "Redis unhealthy"
+	@echo ""
+	@echo "$(YELLOW)Service Info:$(RESET)"
+	@docker-compose exec redis redis-cli -a $${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production} info server | grep -E "redis_version|uptime_in_days|connected_clients|used_memory_human" || echo "Failed to get info"
+
+redis-stats: ## Display Redis performance and memory statistics
+	@echo "$(GREEN)Redis performance statistics:$(RESET)"
+	@docker-compose exec redis redis-cli -a $${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production} info memory | grep -E "used_memory_human|used_memory_peak_human|maxmemory_human" || echo "Failed to get memory info"
+	@echo ""
+	@echo "$(YELLOW)Connection Stats:$(RESET)"
+	@docker-compose exec redis redis-cli -a $${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production} info clients | grep -E "connected_clients|blocked_clients" || echo "Failed to get client info"
+	@echo ""
+	@echo "$(YELLOW)Command Stats:$(RESET)"
+	@docker-compose exec redis redis-cli -a $${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production} info stats | grep -E "total_commands_processed|total_connections_received|keyspace_hits|keyspace_misses" || echo "Failed to get command stats"
+
+redis-shell: ## Open Redis CLI shell
+	@echo "$(GREEN)Opening Redis CLI shell...$(RESET)"
+	@docker-compose exec redis redis-cli -a $${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production}
+
+redis-logs: ## Tail Redis container logs
+	@echo "$(GREEN)Showing Redis container logs...$(RESET)"
+	@docker-compose logs -f --tail=100 redis
+
+redis-cli: ## Execute Redis CLI command (usage: make redis-cli CMD="INFO")
+	@if [ -z "$(CMD)" ]; then \
+		echo "$(RED)Error: CMD parameter is required$(RESET)"; \
+		echo "Usage: make redis-cli CMD=\"INFO\""; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Executing Redis command: $(CMD)$(RESET)"
+	@docker-compose exec redis redis-cli -a $${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production} $(CMD)
 
 test: ## Run all tests
 	@echo "$(GREEN)Running comprehensive test suite...$(RESET)"

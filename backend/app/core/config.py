@@ -63,10 +63,38 @@ class Settings(BaseSettings):
 
     # Redis configuration
     REDIS_URL: str = Field(
-        default="redis://localhost:6379", description="Redis connection URL"
+        default="redis://localhost:5240",
+        description="Redis connection URL (port 5240 as per architecture)",
     )
     REDIS_MAX_CONNECTIONS: int = Field(
-        default=10, ge=1, le=50, description="Redis connection pool size"
+        default=10,
+        ge=10,
+        le=50,
+        description="Redis connection pool size (minimum 10 as per REQ-001)",
+    )
+    REDIS_CONNECTION_TIMEOUT: float = Field(
+        default=10.0, ge=1.0, le=60.0, description="Redis connection timeout in seconds"
+    )
+    REDIS_OPERATION_TIMEOUT: float = Field(
+        default=10.0, ge=1.0, le=60.0, description="Redis operation timeout in seconds"
+    )
+    REDIS_HEALTH_CHECK_INTERVAL: float = Field(
+        default=30.0,
+        ge=5.0,
+        le=300.0,
+        description="Redis health check interval in seconds",
+    )
+    REDIS_MAX_RETRIES: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        description="Maximum retry attempts for Redis operations",
+    )
+    REDIS_RETRY_DELAY: float = Field(
+        default=1.0,
+        ge=0.1,
+        le=10.0,
+        description="Initial retry delay for Redis operations (seconds)",
     )
 
     # API configuration
