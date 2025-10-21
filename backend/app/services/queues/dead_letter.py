@@ -15,8 +15,8 @@ from pydantic import BaseModel, Field
 
 from opentelemetry import trace
 
-from ...infrastructure.redis.connection_factory import redis_connection_factory
-from .queue_manager import TaskData, TaskType, TaskStatus
+from app.infrastructure.redis.connection_factory import redis_connection_factory
+from app.services.queues.queue_manager import TaskData, TaskType, TaskStatus
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -55,9 +55,6 @@ class DeadLetterQueue:
 
     def __init__(self):
         self._redis_factory = redis_connection_factory
-        self._queue_key = "dead_letter_queue"
-        self._metadata_key = "dead_letter_metadata"
-        self._stats_key = "dead_letter_stats"
 
     async def add_task(
         self,
@@ -151,80 +148,113 @@ class DeadLetterQueue:
                 span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
                 raise
 
-    async def get_task(self, task_id: UUID) -> Optional[DeadLetterTask]:
+    async def get_task(
+        self, project_id: UUID, task_id: UUID
+    ) -> Optional[DeadLetterTask]:
         """
         Get dead letter task by ID.
 
         Args:
+            project_id: Project ID (required for isolation)
             task_id: Task ID to retrieve
 
         Returns:
             Dead letter task or None if not found
         """
-        try:
-            task_key = f"{self._queue_key}:task:{task_id}"
+        if not project_id:
+            raise ValueError("project_id is required")
 
-            async with self._redis_factory.get_connection() as redis_client:
+        try:
+            task_key = f"proj:{project_id}:dead_letter_queue:task:{task_id}"
+
+            async with self._redis_factory.get_connection(
+                str(project_id)
+            ) as redis_client:
                 task_json = await redis_client.get(task_key)
 
                 if task_json:
-                    return DeadLetterTask.parse_raw(task_json)
+                    task = DeadLetterTask.model_validate_json(task_json)
+                    # Verify project isolation
+                    if task.project_id != project_id:
+                        logger.error(
+                            f"Project isolation violation: task {task_id} belongs to different project"
+                        )
+                        return None
+                    return task
 
             return None
 
         except Exception as e:
-            logger.error(f"Failed to get dead letter task {task_id}: {e}")
+            logger.error(
+                f"Failed to get dead letter task {task_id} for project {project_id}: {e}"
+            )
             return None
 
     async def list_tasks(
         self,
+        project_id: UUID,
         limit: int = 100,
         offset: int = 0,
         task_type: Optional[TaskType] = None,
         severity: Optional[str] = None,
         category: Optional[str] = None,
-        project_id: Optional[UUID] = None,
     ) -> List[DeadLetterTask]:
         """
         List dead letter tasks with filtering.
 
         Args:
+            project_id: Project ID (required for isolation)
             limit: Maximum number of tasks to return
             offset: Offset for pagination
             task_type: Filter by task type
             severity: Filter by severity
             category: Filter by category
-            project_id: Filter by project ID
 
         Returns:
             List of dead letter tasks
         """
+        if not project_id:
+            raise ValueError("project_id is required")
+
         try:
-            # Get all task keys
-            async with self._redis_factory.get_connection() as redis_client:
-                pattern = f"{self._queue_key}:task:*"
-                task_keys = await redis_client.keys(pattern)
+            # Get all task keys using scan_iter for better performance
+            async with self._redis_factory.get_connection(
+                str(project_id)
+            ) as redis_client:
+                pattern = f"proj:{project_id}:dead_letter_queue:task:*"
+                task_keys = []
+                async for key in redis_client.scan_iter(match=pattern):
+                    task_keys.append(key)
 
             tasks = []
+            # Apply offset and process keys
             for key in task_keys[offset:]:
                 if len(tasks) >= limit:
                     break
 
-                task_json = await redis_client.get(key)
-                if task_json:
-                    task = DeadLetterTask.parse_raw(task_json)
+                async with self._redis_factory.get_connection(
+                    str(project_id)
+                ) as redis_client:
+                    task_json = await redis_client.get(key)
+                    if task_json:
+                        task = DeadLetterTask.model_validate_json(task_json)
 
-                    # Apply filters
-                    if task_type and task.task_type != task_type:
-                        continue
-                    if severity and task.severity != severity:
-                        continue
-                    if category and task.category != category:
-                        continue
-                    if project_id and task.project_id != project_id:
-                        continue
+                        # Verify project isolation (double-check)
+                        if task.project_id != project_id:
+                            logger.error(
+                                f"Project isolation violation: task key {key} belongs to different project"
+                            )
+                            continue
 
-                    tasks.append(task)
+                        # Apply filters
+                        if task_type and task.task_type != task_type:
+                            continue
+                        if severity and task.severity != severity:
+                            continue
+                        if category and task.category != category:
+                            continue
+
+                        tasks.append(task)
 
             # Sort by last failed time (newest first)
             tasks.sort(key=lambda t: t.last_failed_at, reverse=True)
@@ -232,23 +262,38 @@ class DeadLetterQueue:
             return tasks
 
         except Exception as e:
-            logger.error(f"Failed to list dead letter tasks: {e}")
+            logger.error(
+                f"Failed to list dead letter tasks for project {project_id}: {e}"
+            )
             return []
 
-    async def retry_task(self, task_id: UUID, worker_id: Optional[str] = None) -> bool:
+    async def retry_task(
+        self, project_id: UUID, task_id: UUID, worker_id: Optional[str] = None
+    ) -> bool:
         """
         Manually retry a dead letter task.
 
         Args:
+            project_id: Project ID (required for isolation)
             task_id: Task ID to retry
             worker_id: Worker ID for the retry
 
         Returns:
             True if task was successfully requeued
         """
+        if not project_id:
+            raise ValueError("project_id is required")
+
         try:
-            dead_letter_task = await self.get_task(task_id)
+            dead_letter_task = await self.get_task(project_id, task_id)
             if not dead_letter_task:
+                return False
+
+            # Verify project isolation
+            if dead_letter_task.project_id != project_id:
+                logger.error(
+                    f"Project isolation violation: task {task_id} belongs to different project"
+                )
                 return False
 
             # Create new task data for retry
@@ -276,60 +321,88 @@ class DeadLetterQueue:
             )
 
             # Remove from dead letter queue
-            await self.remove_task(task_id)
+            await self.remove_task(project_id, task_id)
 
             logger.info(
-                f"Dead letter task {task_id} manually requeued",
-                extra={"task_id": str(task_id), "worker_id": worker_id},
+                f"Dead letter task {task_id} manually requeued for project {project_id}",
+                extra={
+                    "project_id": str(project_id),
+                    "task_id": str(task_id),
+                    "worker_id": worker_id,
+                },
             )
 
             return True
 
         except Exception as e:
-            logger.error(f"Failed to retry dead letter task {task_id}: {e}")
+            logger.error(
+                f"Failed to retry dead letter task {task_id} for project {project_id}: {e}"
+            )
             return False
 
-    async def remove_task(self, task_id: UUID) -> bool:
+    async def remove_task(self, project_id: UUID, task_id: UUID) -> bool:
         """
         Remove task from dead letter queue.
 
         Args:
+            project_id: Project ID (required for isolation)
             task_id: Task ID to remove
 
         Returns:
             True if task was removed
         """
-        try:
-            task_key = f"{self._queue_key}:task:{task_id}"
+        if not project_id:
+            raise ValueError("project_id is required")
 
-            async with self._redis_factory.get_connection() as redis_client:
+        try:
+            task_key = f"proj:{project_id}:dead_letter_queue:task:{task_id}"
+
+            async with self._redis_factory.get_connection(
+                str(project_id)
+            ) as redis_client:
                 deleted = await redis_client.delete(task_key)
 
             if deleted:
-                logger.info(f"Removed dead letter task {task_id}")
+                logger.info(
+                    f"Removed dead letter task {task_id} for project {project_id}"
+                )
 
             return bool(deleted)
 
         except Exception as e:
-            logger.error(f"Failed to remove dead letter task {task_id}: {e}")
+            logger.error(
+                f"Failed to remove dead letter task {task_id} for project {project_id}: {e}"
+            )
             return False
 
-    async def get_statistics(self) -> Dict[str, Any]:
+    async def get_statistics(self, project_id: UUID) -> Dict[str, Any]:
         """
         Get dead letter queue statistics.
+
+        Args:
+            project_id: Project ID (required for isolation)
 
         Returns:
             Dead letter queue statistics
         """
+        if not project_id:
+            raise ValueError("project_id is required")
+
         try:
-            async with self._redis_factory.get_connection() as redis_client:
-                # Get total count
-                pattern = f"{self._queue_key}:task:*"
-                task_keys = await redis_client.keys(pattern)
+            # Use scan_iter for better performance
+            async with self._redis_factory.get_connection(
+                str(project_id)
+            ) as redis_client:
+                # Get total count using scan_iter
+                pattern = f"proj:{project_id}:dead_letter_queue:task:*"
+                task_keys = []
+                async for key in redis_client.scan_iter(match=pattern):
+                    task_keys.append(key)
                 total_count = len(task_keys)
 
-                # Get statistics by task type, severity, category
+                # Initialize statistics
                 stats = {
+                    "project_id": str(project_id),
                     "total_tasks": total_count,
                     "by_task_type": {},
                     "by_severity": {},
@@ -347,7 +420,14 @@ class DeadLetterQueue:
                 for key in task_keys:
                     task_json = await redis_client.get(key)
                     if task_json:
-                        task = DeadLetterTask.parse_raw(task_json)
+                        task = DeadLetterTask.model_validate_json(task_json)
+
+                        # Verify project isolation (double-check)
+                        if task.project_id != project_id:
+                            logger.error(
+                                f"Project isolation violation: task key {key} belongs to different project"
+                            )
+                            continue
 
                         # Count by task type
                         task_type_key = task.task_type.value
@@ -383,83 +463,115 @@ class DeadLetterQueue:
                             stats["manual_review_required"] += 1
 
                         # Track oldest and newest
-                        if (
-                            not stats["oldest_task"]
-                            or task.last_failed_at < stats["oldest_task"]
+                        if not stats[
+                            "oldest_task"
+                        ] or task.last_failed_at < datetime.fromisoformat(
+                            stats["oldest_task"]
                         ):
                             stats["oldest_task"] = task.last_failed_at.isoformat()
-                        if (
-                            not stats["newest_task"]
-                            or task.last_failed_at > stats["newest_task"]
+                        if not stats[
+                            "newest_task"
+                        ] or task.last_failed_at > datetime.fromisoformat(
+                            stats["newest_task"]
                         ):
                             stats["newest_task"] = task.last_failed_at.isoformat()
 
                 return stats
 
         except Exception as e:
-            logger.error(f"Failed to get dead letter statistics: {e}")
-            return {"error": str(e), "timestamp": datetime.utcnow().isoformat()}
+            logger.error(
+                f"Failed to get dead letter statistics for project {project_id}: {e}"
+            )
+            return {
+                "error": str(e),
+                "project_id": str(project_id),
+                "timestamp": datetime.utcnow().isoformat(),
+            }
 
-    async def process_auto_retries(self) -> int:
+    async def process_auto_retries(self, project_id: UUID) -> int:
         """
         Process auto-retry eligible tasks.
+
+        Args:
+            project_id: Project ID (required for isolation)
 
         Returns:
             Number of tasks requeued for auto retry
         """
+        if not project_id:
+            raise ValueError("project_id is required")
+
         retry_count = 0
 
         try:
-            tasks = await self.list_tasks(limit=1000)  # Get all tasks
+            tasks = await self.list_tasks(
+                project_id=project_id, limit=1000
+            )  # Get all tasks for project
 
             for task in tasks:
                 if task.auto_retry_eligible and task.next_auto_retry_at:
                     if datetime.utcnow() >= task.next_auto_retry_at:
-                        if await self.retry_task(task.original_task_id):
+                        if await self.retry_task(project_id, task.original_task_id):
                             retry_count += 1
 
             if retry_count > 0:
-                logger.info(f"Auto-retried {retry_count} dead letter tasks")
+                logger.info(
+                    f"Auto-retried {retry_count} dead letter tasks for project {project_id}"
+                )
 
             return retry_count
 
         except Exception as e:
-            logger.error(f"Failed to process auto retries: {e}")
+            logger.error(
+                f"Failed to process auto retries for project {project_id}: {e}"
+            )
             return 0
 
-    async def cleanup_old_tasks(self, max_age_days: int = 30) -> int:
+    async def cleanup_old_tasks(self, project_id: UUID, max_age_days: int = 30) -> int:
         """
         Clean up old dead letter tasks.
 
         Args:
+            project_id: Project ID (required for isolation)
             max_age_days: Maximum age in days
 
         Returns:
             Number of tasks cleaned up
         """
+        if not project_id:
+            raise ValueError("project_id is required")
+
         try:
             cutoff_time = datetime.utcnow() - timedelta(days=max_age_days)
-            tasks = await self.list_tasks(limit=10000)  # Get all tasks
+            tasks = await self.list_tasks(
+                project_id=project_id, limit=10000
+            )  # Get all tasks for project
 
             cleaned_count = 0
             for task in tasks:
                 if task.last_failed_at < cutoff_time:
-                    if await self.remove_task(task.original_task_id):
+                    if await self.remove_task(project_id, task.original_task_id):
                         cleaned_count += 1
 
             if cleaned_count > 0:
-                logger.info(f"Cleaned up {cleaned_count} old dead letter tasks")
+                logger.info(
+                    f"Cleaned up {cleaned_count} old dead letter tasks for project {project_id}"
+                )
 
             return cleaned_count
 
         except Exception as e:
-            logger.error(f"Failed to cleanup old dead letter tasks: {e}")
+            logger.error(
+                f"Failed to cleanup old dead letter tasks for project {project_id}: {e}"
+            )
             return 0
 
     async def _store_dead_letter_task(self, task: DeadLetterTask) -> None:
         """Store dead letter task in Redis."""
-        task_key = f"{self._queue_key}:task:{task.original_task_id}"
-        task_json = json.dumps(task.dict(), default=str)
+        task_key = (
+            f"proj:{task.project_id}:dead_letter_queue:task:{task.original_task_id}"
+        )
+        task_json = json.dumps(task.model_dump(), default=str)
 
         async with self._redis_factory.get_connection(
             str(task.project_id)
@@ -468,17 +580,20 @@ class DeadLetterQueue:
 
     async def _update_stats(self, task: DeadLetterTask) -> None:
         """Update dead letter statistics."""
-        async with self._redis_factory.get_connection() as redis_client:
+        stats_key = f"proj:{task.project_id}:dead_letter_stats"
+        async with self._redis_factory.get_connection(
+            str(task.project_id)
+        ) as redis_client:
             # Increment counters
-            await redis_client.hincrby(self._stats_key, "total_tasks", 1)
+            await redis_client.hincrby(stats_key, "total_tasks", 1)
             await redis_client.hincrby(
-                self._stats_key, f"task_type:{task.task_type.value}", 1
+                stats_key, f"task_type:{task.task_type.value}", 1
             )
-            await redis_client.hincrby(self._stats_key, f"severity:{task.severity}", 1)
-            await redis_client.hincrby(self._stats_key, f"category:{task.category}", 1)
+            await redis_client.hincrby(stats_key, f"severity:{task.severity}", 1)
+            await redis_client.hincrby(stats_key, f"category:{task.category}", 1)
 
             # Set expiration
-            await redis_client.expire(self._stats_key, 86400 * 7)  # 7 days
+            await redis_client.expire(stats_key, 86400 * 7)  # 7 days
 
     async def _is_auto_retry_eligible(
         self, task_data: TaskData, error: str, attempts: int

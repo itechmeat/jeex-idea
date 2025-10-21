@@ -119,7 +119,7 @@ class RedisMetricsCollector:
         self.slow_command_threshold_ms = 100  # 100ms for Redis commands
 
         # Internal state for OpenTelemetry callbacks
-        self._latest_memory_usage = 0
+        self._latest_memory_percentage = 0
         self._latest_active_connections = 0
         self._latest_error_rate = 0
 
@@ -290,11 +290,24 @@ class RedisMetricsCollector:
 
     def _observe_memory_usage(self, options) -> List[Observation]:
         """Callback for memory usage observable gauge."""
-        return [Observation(self._latest_memory_usage)]
+        # Calculate bytes from percentage for backward compatibility
+        # This is approximate since we don't store max_memory in the callback state
+        if self._latest_memory_percentage > 0:
+            # Use a reasonable max memory assumption (1GB) for bytes calculation
+            # In a real scenario, this should be stored separately or retrieved from latest metrics
+            estimated_max_memory = 1024 * 1024 * 1024  # 1GB
+            estimated_bytes = (
+                self._latest_memory_percentage / 100
+            ) * estimated_max_memory
+        else:
+            estimated_bytes = 0
+        return [Observation(estimated_bytes)]
 
     def _observe_memory_percentage(self, options) -> List[Observation]:
         """Callback for memory percentage observable gauge."""
-        return [Observation(self._latest_memory_usage / 100)]  # Convert to 0-1 range
+        return [
+            Observation(self._latest_memory_percentage)
+        ]  # Already in percentage (0-100)
 
     def _observe_active_connections(self, options) -> List[Observation]:
         """Callback for active connections observable gauge."""
@@ -456,7 +469,7 @@ class RedisMetricsCollector:
     async def _collect_memory_metrics(self) -> None:
         """Collect Redis memory usage metrics."""
         try:
-            async with redis_connection_factory.get_connection() as redis_client:
+            async with redis_connection_factory.get_admin_connection() as redis_client:
                 # Get Redis INFO memory section
                 info = await redis_client.info("memory")
 
@@ -504,8 +517,8 @@ class RedisMetricsCollector:
                 if len(self._memory_metrics) > self._max_history_size:
                     self._memory_metrics.pop(0)
 
-                # Update internal state for OpenTelemetry
-                self._latest_memory_usage = used_memory
+                # Update internal state for OpenTelemetry with percentage value
+                self._latest_memory_percentage = memory_percentage
 
                 # Update Prometheus metrics
                 self.prom_redis_memory_bytes.set(used_memory)
@@ -534,7 +547,7 @@ class RedisMetricsCollector:
             factory_metrics = redis_connection_factory.get_metrics()
 
             # Get Redis INFO clients section
-            async with redis_connection_factory.get_connection() as redis_client:
+            async with redis_connection_factory.get_admin_connection() as redis_client:
                 client_info = await redis_client.info("clients")
                 connected_clients = client_info.get("connected_clients", 0)
 

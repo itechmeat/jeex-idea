@@ -14,13 +14,14 @@ from enum import Enum
 from typing import Dict, Any, Optional, List, Union, Callable
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
-from ...core.config import settings
-from ...infrastructure.redis.connection_factory import redis_connection_factory
-from ...infrastructure.redis.exceptions import (
+from app.core.config import settings
+from app.infrastructure.redis.connection_factory import redis_connection_factory
+from app.infrastructure.redis.exceptions import (
     RedisException,
     RedisOperationTimeoutException,
     RedisConnectionException,
@@ -50,6 +51,35 @@ class TaskPriority(int, Enum):
     HIGH = 10
     CRITICAL = 20
     URGENT = 50
+
+
+def promote_task_priority(current_priority: TaskPriority) -> TaskPriority:
+    """
+    Promote task priority to the next level for retry.
+
+    Args:
+        current_priority: Current task priority
+
+    Returns:
+        Next priority level (capped at URGENT)
+
+    Priority mapping:
+    - LOW (1) → NORMAL (5)
+    - NORMAL (5) → HIGH (10)
+    - HIGH (10) → CRITICAL (20)
+    - CRITICAL (20) → URGENT (50)
+    - URGENT (50) → URGENT (50)  # cap at highest
+    """
+    priority_mapping = {
+        TaskPriority.LOW: TaskPriority.NORMAL,
+        TaskPriority.NORMAL: TaskPriority.HIGH,
+        TaskPriority.HIGH: TaskPriority.CRITICAL,
+        TaskPriority.CRITICAL: TaskPriority.URGENT,
+        TaskPriority.URGENT: TaskPriority.URGENT,  # Cap at highest
+    }
+
+    # Return mapped priority or URGENT as fallback for unknown values
+    return priority_mapping.get(current_priority, TaskPriority.URGENT)
 
 
 class TaskStatus(str, Enum):
@@ -84,8 +114,9 @@ class TaskData(BaseModel):
         default_factory=dict, description="Additional metadata"
     )
 
-    @validator("scheduled_at")
-    def validate_scheduled_at(cls, v, values):
+    @field_validator("scheduled_at")
+    @classmethod
+    def validate_scheduled_at(cls, v):
         """Validate scheduled execution time."""
         if v and v < datetime.utcnow():
             raise ValueError("scheduled_at cannot be in the past")
@@ -160,11 +191,12 @@ class QueueManager:
         },
     }
 
-    def __init__(self):
+    def __init__(self, bootstrap_project_id: Optional[UUID] = None):
         self._redis_factory = redis_connection_factory
         self._lua_scripts = {}
         self._initialized = False
         self._lock = asyncio.Lock()
+        self._bootstrap_project_id = bootstrap_project_id
 
     async def initialize(self) -> None:
         """Initialize queue manager and load Lua scripts."""
@@ -222,7 +254,7 @@ class QueueManager:
         redis.call('EXPIRE', project_queue_key, 86400)
 
         -- Update status
-        redis.call('HSET', status_key, 'status', 'queued', 'queued_at', ARGV[4])
+        redis.call('HSET', status_key, 'status', 'queued', 'queued_at', ARGV[5])
         redis.call('EXPIRE', status_key, 86400)
 
         return {1, "Task enqueued", queue_size + 1}
@@ -252,17 +284,18 @@ class QueueManager:
 
         -- Update status to running
         local status_key = "task:" .. task_info.task_id .. ":status"
-        redis.call('HMSET', status_key,
+        local current_attempts = tonumber(redis.call('HGET', status_key, 'attempts') or 0)
+        redis.call('HSET', status_key,
             'status', 'running',
             'worker_id', worker_id,
             'started_at', ARGV[2],
-            'attempts', tostring(tonumber(redis.call('HGET', status_key, 'attempts') or 0) + 1)
+            'attempts', tostring(current_attempts + 1)
         )
 
         return {1, task_data}
         """
 
-        async with self._redis_factory.get_connection() as redis_client:
+        async with self._redis_factory.get_admin_connection() as redis_client:
             self._lua_scripts["enqueue"] = await redis_client.script_load(
                 enqueue_script
             )
@@ -355,6 +388,7 @@ class QueueManager:
                     raise ValueError(f"Failed to enqueue task: {message}")
 
                 span.set_attribute("queue_size", result[2] if len(result) > 2 else 0)
+                span.set_status(Status(StatusCode.OK))
 
                 logger.info(
                     f"Enqueued task {task.task_id} of type {task_type.value}",
@@ -370,7 +404,7 @@ class QueueManager:
 
             except Exception as e:
                 logger.error(f"Failed to enqueue task: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
     async def dequeue_task(
@@ -404,55 +438,54 @@ class QueueManager:
         with tracer.start_as_current_span("queue_manager.dequeue") as span:
             span.set_attribute("task_type", task_type.value)
             span.set_attribute("worker_id", worker_id)
+            if project_id:
+                span.set_attribute("project_id", str(project_id))
 
             try:
+                # Import repository here to avoid circular imports
+                from app.infrastructure.repositories.queue_repository import (
+                    queue_repository,
+                )
+
                 queue_name = queue_config["name"]
-                queue_key = f"queue:{queue_name}"
 
-                # If project_id specified, try project-specific queue first
+                # CRITICAL FIX: Pass timeout_seconds to repository for proper blocking behavior
+                # If project_id specified, try project-specific dequeue first
                 if project_id:
-                    project_queue_key = f"{queue_key}:project:{project_id}"
-
-                    async with self._redis_factory.get_connection(
-                        str(project_id)
-                    ) as redis_client:
-                        # Try to get from project queue first
-                        task_json = await redis_client.blpop(
-                            project_queue_key, timeout=1
-                        )
-
-                        if task_json:
-                            # Found task in project queue, update status and return
-                            return await self._process_dequeued_task(
-                                task_json[1], worker_id, str(project_id)
-                            )
-
-                # Fallback to general queue
-                async with self._redis_factory.get_connection() as redis_client:
-                    result = await redis_client.evalsha(
-                        self._lua_scripts["dequeue"],
-                        2,  # number of keys
-                        queue_key,
-                        str(project_id) if project_id else "",
-                        worker_id,
-                        datetime.utcnow().isoformat(),
+                    task_data = await queue_repository.dequeue_task(
+                        task_type, worker_id, project_id, timeout_seconds
                     )
+                    if task_data:
+                        span.set_attribute("task_id", str(task_data.task_id))
+                        span.set_attribute("project_id", str(task_data.project_id))
+                        span.set_attribute("queue_source", "project_specific")
+                        span.set_status(Status(StatusCode.OK))
+                        return task_data
 
-                success, task_json = result[0], result[1]
+                # Fallback to general queue - use default project_id
+                default_project_id = (
+                    project_id
+                    or self._bootstrap_project_id
+                    or UUID("12345678-1234-5678-9abc-123456789abc")
+                )  # TODO: Extract from context
+                task_data = await queue_repository.dequeue_task(
+                    task_type, worker_id, default_project_id, timeout_seconds
+                )
 
-                if not success:
+                if task_data:
+                    span.set_attribute("task_id", str(task_data.task_id))
+                    span.set_attribute("project_id", str(task_data.project_id))
+                    span.set_attribute("queue_source", "general")
+                    span.set_status(Status(StatusCode.OK))
+                    return task_data
+                else:
                     span.set_attribute("no_tasks_available", True)
+                    span.set_status(Status(StatusCode.OK))
                     return None
-
-                task_data = TaskData.parse_raw(task_json)
-                span.set_attribute("task_id", str(task_data.task_id))
-                span.set_attribute("project_id", str(task_data.project_id))
-
-                return task_data
 
             except Exception as e:
                 logger.error(f"Failed to dequeue task: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
     async def _process_dequeued_task(
@@ -463,15 +496,14 @@ class QueueManager:
         status_key = f"task:{task_data.task_id}:status"
 
         async with self._redis_factory.get_connection(project_id) as redis_client:
-            await redis_client.hmset(
+            current_attempts = int(await redis_client.hget(status_key, "attempts") or 0)
+            await redis_client.hset(
                 status_key,
-                {
+                mapping={
                     "status": TaskStatus.RUNNING.value,
                     "worker_id": worker_id,
                     "started_at": datetime.utcnow().isoformat(),
-                    "attempts": str(
-                        int(await redis_client.hget(status_key, "attempts") or 0) + 1
-                    ),
+                    "attempts": str(current_attempts + 1),
                 },
             )
 
@@ -549,14 +581,14 @@ class QueueManager:
         delay_seconds = min(2**attempt, 300)  # Max 5 minutes
         scheduled_at = datetime.utcnow() + timedelta(seconds=delay_seconds)
 
-        # Requeue with higher priority for retry
-        new_priority = min(task_data.priority.value + 2, TaskPriority.URGENT.value)
+        # Promote priority for retry using proper enum mapping
+        new_priority = promote_task_priority(task_data.priority)
 
         return await self.enqueue_task(
             task_type=task_data.task_type,
             project_id=task_data.project_id,
             data=task_data.data,
-            priority=TaskPriority(new_priority),
+            priority=new_priority,
             scheduled_at=scheduled_at,
             timeout_seconds=task_data.timeout_seconds,
             max_attempts=task_data.max_attempts - 1,
@@ -586,22 +618,31 @@ class QueueManager:
             Task status information or None if not found
         """
         try:
-            status_key = f"task:{task_id}:status"
+            # Import repository here to avoid circular imports
+            from app.infrastructure.repositories.queue_repository import (
+                queue_repository,
+            )
 
-            async with self._redis_factory.get_connection() as redis_client:
-                status_data = await redis_client.hgetall(status_key)
+            # First get task data to extract project_id
+            task_data = await self.get_task_data(task_id)
+            if not task_data:
+                return None
 
-                if status_data:
-                    # Convert string values to appropriate types
-                    return {
-                        "status": status_data.get("status"),
-                        "worker_id": status_data.get("worker_id"),
-                        "created_at": status_data.get("created_at"),
-                        "started_at": status_data.get("started_at"),
-                        "completed_at": status_data.get("completed_at"),
-                        "attempts": int(status_data.get("attempts", 0)),
-                        "error": status_data.get("error"),
-                    }
+            # Use repository method with project_id
+            status_data = await queue_repository.get_task_status(
+                task_id, task_data.project_id
+            )
+
+            if status_data:
+                return {
+                    "status": status_data.get("status"),
+                    "worker_id": status_data.get("worker_id"),
+                    "queued_at": status_data.get("queued_at"),
+                    "started_at": status_data.get("started_at"),
+                    "completed_at": status_data.get("completed_at"),
+                    "attempts": int(status_data.get("attempts", 0)),
+                    "error": status_data.get("error"),
+                }
 
             return None
 
@@ -620,15 +661,19 @@ class QueueManager:
             Task data or None if not found
         """
         try:
-            task_key = f"task:{task_id}"
+            # Import repository here to avoid circular imports
+            from app.infrastructure.repositories.queue_repository import (
+                queue_repository,
+            )
 
-            async with self._redis_factory.get_connection() as redis_client:
-                task_json = await redis_client.get(task_key)
+            # Try to find project_id from known task associations
+            # For now, use a default project_id - TODO: Extract from context
+            default_project_id = self._bootstrap_project_id or UUID(
+                "12345678-1234-5678-9abc-123456789abc"
+            )
 
-                if task_json:
-                    return TaskData.parse_raw(task_json)
-
-            return None
+            # Use repository method with project_id
+            return await queue_repository.get_task_data(task_id, default_project_id)
 
         except Exception as e:
             logger.error(f"Failed to get task data for {task_id}: {e}")
@@ -644,75 +689,68 @@ class QueueManager:
     ) -> bool:
         """Update task status atomically."""
         try:
-            status_key = f"task:{task_id}:status"
+            # Import repository here to avoid circular imports
+            from app.infrastructure.repositories.queue_repository import (
+                queue_repository,
+            )
 
-            update_data = {
-                "status": status.value,
-                "completed_at": datetime.utcnow().isoformat(),
-            }
+            # Get task data to extract project_id
+            task_data = await self.get_task_data(task_id)
+            if not task_data:
+                logger.error(f"Cannot update status for unknown task {task_id}")
+                return False
 
-            if result:
-                update_data["result"] = json.dumps(result, default=str)
+            # Update status using repository
+            success = await queue_repository.complete_task(
+                task_id=task_id,
+                project_id=task_data.project_id,
+                status=status,
+                result=result,
+                error=error,
+                worker_id=worker_id,
+            )
 
-            if error:
-                update_data["error"] = error
+            if success:
+                logger.debug(f"Updated task {task_id} status to {status.value}")
+            else:
+                logger.error(
+                    f"Failed to update task {task_id} status to {status.value}"
+                )
 
-            if worker_id:
-                update_data["worker_id"] = worker_id
-
-            async with self._redis_factory.get_connection() as redis_client:
-                await redis_client.hmset(status_key, update_data)
-
-            logger.debug(f"Updated task {task_id} status to {status.value}")
-            return True
+            return success
 
         except Exception as e:
             logger.error(f"Failed to update task status for {task_id}: {e}")
             return False
 
-    async def get_queue_stats(self, task_type: TaskType) -> Dict[str, Any]:
+    async def get_queue_stats(
+        self, task_type: TaskType, project_id: Optional[UUID] = None
+    ) -> Dict[str, Any]:
         """
         Get queue statistics.
 
         Args:
             task_type: Task type to get stats for
+            project_id: Optional project ID for project-specific stats
 
         Returns:
             Queue statistics
         """
-        queue_config = self.QUEUES.get(task_type)
-        if not queue_config:
-            return {}
-
         try:
-            queue_name = queue_config["name"]
-            queue_key = f"queue:{queue_name}"
+            # Import repository here to avoid circular imports
+            from app.infrastructure.repositories.queue_repository import (
+                queue_repository,
+            )
 
-            async with self._redis_factory.get_connection() as redis_client:
-                # Get queue sizes
-                total_tasks = await redis_client.zcard(f"{queue_key}:priority")
+            # Use default project_id if not provided
+            default_project_id = (
+                project_id
+                or self._bootstrap_project_id
+                or UUID("12345678-1234-5678-9abc-123456789abc")
+            )
 
-                # Get tasks by status
-                status_counts = {}
-                for status in TaskStatus:
-                    pattern = f"task:*:status"
-                    keys = await redis_client.keys(pattern)
-                    count = 0
-                    for key in keys:
-                        task_status = await redis_client.hget(key, "status")
-                        if task_status == status.value:
-                            count += 1
-                    status_counts[status.value] = count
-
-                return {
-                    "task_type": task_type.value,
-                    "queue_name": queue_name,
-                    "total_queued": total_tasks,
-                    "max_size": queue_config["max_size"],
-                    "status_counts": status_counts,
-                    "utilization": (total_tasks / queue_config["max_size"]) * 100,
-                    "timestamp": datetime.utcnow().isoformat(),
-                }
+            # Use repository method with project_id
+            return await queue_repository.get_queue_stats(task_type, default_project_id)
 
         except Exception as e:
             logger.error(f"Failed to get queue stats for {task_type}: {e}")
@@ -729,58 +767,72 @@ class QueueManager:
             Number of tasks cleaned up
         """
         try:
-            cutoff_time = datetime.utcnow() - timedelta(hours=max_age_hours)
-            cleaned_count = 0
+            # Import repository here to avoid circular imports
+            from app.infrastructure.repositories.queue_repository import (
+                queue_repository,
+            )
 
-            async with self._redis_factory.get_connection() as redis_client:
-                # Find expired task keys
-                task_pattern = "task:*"
-                task_keys = await redis_client.keys(task_pattern)
+            # Use default project_id for cleanup - TODO: Clean up for all projects
+            default_project_id = self._bootstrap_project_id or UUID(
+                "12345678-1234-5678-9abc-123456789abc"
+            )
 
-                for key in task_keys:
-                    # Skip status keys
-                    if key.endswith(":status"):
-                        continue
-
-                    task_json = await redis_client.get(key)
-                    if task_json:
-                        try:
-                            task_data = TaskData.parse_raw(task_json)
-                            if task_data.created_at < cutoff_time:
-                                # Delete task data and status
-                                await redis_client.delete(key)
-                                await redis_client.delete(f"{key}:status")
-                                cleaned_count += 1
-                        except:
-                            pass
-
-            logger.info(f"Cleaned up {cleaned_count} expired tasks")
-            return cleaned_count
+            # Use repository method with project_id
+            return await queue_repository.cleanup_expired_tasks(
+                default_project_id, max_age_hours
+            )
 
         except Exception as e:
             logger.error(f"Failed to cleanup expired tasks: {e}")
             return 0
 
-    async def get_all_queue_stats(self) -> Dict[str, Any]:
+    async def get_all_queue_stats(
+        self, project_id: Optional[UUID] = None
+    ) -> Dict[str, Any]:
         """
         Get statistics for all queues.
+
+        Args:
+            project_id: Optional project ID for project-specific stats
 
         Returns:
             All queue statistics
         """
-        stats = {
-            "queues": {},
-            "total_tasks": 0,
-            "timestamp": datetime.utcnow().isoformat(),
-        }
+        try:
+            # Import repository here to avoid circular imports
+            from app.infrastructure.repositories.queue_repository import (
+                queue_repository,
+            )
 
-        for task_type in TaskType:
-            queue_stats = await self.get_queue_stats(task_type)
-            stats["queues"][task_type.value] = queue_stats
-            stats["total_tasks"] += queue_stats.get("total_queued", 0)
+            # Use default project_id if not provided
+            default_project_id = (
+                project_id
+                or self._bootstrap_project_id
+                or UUID("12345678-1234-5678-9abc-123456789abc")
+            )
 
-        return stats
+            # Use repository method with project_id
+            return await queue_repository.get_all_queue_stats(default_project_id)
+
+        except Exception as e:
+            logger.error(f"Failed to get all queue stats: {e}")
+            return {
+                "queues": {},
+                "total_tasks": 0,
+                "timestamp": datetime.utcnow().isoformat(),
+                "error": str(e),
+            }
 
 
 # Global queue manager instance
-queue_manager = QueueManager()
+# Optional bootstrap project_id from environment for system initialization
+_bootstrap_project_id = None
+try:
+    from app.core.config import settings
+
+    if hasattr(settings, "BOOTSTRAP_PROJECT_ID"):
+        _bootstrap_project_id = UUID(settings.BOOTSTRAP_PROJECT_ID)
+except (ImportError, AttributeError, ValueError):
+    pass
+
+queue_manager = QueueManager(bootstrap_project_id=_bootstrap_project_id)

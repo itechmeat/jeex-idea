@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, Union
 from uuid import UUID
 
@@ -19,9 +19,9 @@ from pydantic import BaseModel, Field
 
 from opentelemetry import trace
 
-from ...core.config import settings
-from ...infrastructure.redis.connection_factory import redis_connection_factory
-from ...infrastructure.redis.exceptions import (
+from app.core.config import settings
+from app.infrastructure.redis.connection_factory import redis_connection_factory
+from app.infrastructure.redis.exceptions import (
     RedisException,
     RedisOperationTimeoutException,
     RedisConnectionException,
@@ -93,7 +93,7 @@ class RateLimiter:
         self._lock = asyncio.Lock()
 
     async def initialize(self) -> None:
-        """Initialize rate limiter and load Lua scripts."""
+        """Initialize rate limiter."""
         if self._initialized:
             return
 
@@ -102,8 +102,7 @@ class RateLimiter:
                 return
 
             try:
-                # Load Lua scripts for atomic operations
-                await self._load_lua_scripts()
+                # Scripts will be loaded per project on-demand
                 self._initialized = True
                 logger.info("Rate limiter initialized successfully")
 
@@ -111,7 +110,7 @@ class RateLimiter:
                 logger.error(f"Failed to initialize rate limiter: {e}")
                 raise
 
-    async def _load_lua_scripts(self) -> None:
+    async def _load_lua_scripts(self, project_id: UUID) -> None:
         """Load Redis Lua scripts for atomic rate limiting operations."""
 
         # Sliding window Lua script
@@ -128,6 +127,9 @@ class RateLimiter:
         -- Get current count
         local current = redis.call('ZCARD', key)
 
+        -- Debug logging (comment out in production)
+        -- redis.log(redis.LOG_DEBUG, "Rate limit check: key=" .. key .. ", current=" .. current .. ", limit=" .. limit .. ", cost=" .. request_cost)
+
         -- Check if request would exceed limit
         if current + request_cost > limit then
             -- Get oldest request time for retry-after calculation
@@ -143,9 +145,12 @@ class RateLimiter:
             }
         end
 
-        -- Add current request
-        redis.call('ZADD', key, now, now)
-        redis.call('EXPIRE', key, window)
+        -- Add requests according to cost (each unit of cost = 1 request)
+        for i = 1, request_cost do
+            local member = now .. ':' .. math.random(1000000)
+            redis.call('ZADD', key, now, member)
+        end
+        redis.call('EXPIRE', key, math.ceil(window / 1000))
 
         return {
             1,  -- allowed = true
@@ -204,16 +209,17 @@ class RateLimiter:
         }
         """
 
-        async with self._redis_factory.get_connection() as redis_client:
-            self._lua_scripts["sliding_window"] = await redis_client.script_load(
-                sliding_window_script
-            )
-            self._lua_scripts["token_bucket"] = await redis_client.script_load(
-                token_bucket_script
-            )
+        async with self._redis_factory.get_connection(project_id) as redis_client:
+            self._lua_scripts[
+                f"sliding_window:{project_id}"
+            ] = await redis_client.script_load(sliding_window_script)
+            self._lua_scripts[
+                f"token_bucket:{project_id}"
+            ] = await redis_client.script_load(token_bucket_script)
 
     async def check_user_rate_limit(
         self,
+        project_id: UUID,
         user_id: Union[str, UUID],
         config: Optional[RateLimitConfig] = None,
         cost: int = 1,
@@ -222,6 +228,7 @@ class RateLimiter:
         Check rate limit for user using sliding window algorithm.
 
         Args:
+            project_id: Project identifier for isolation
             user_id: User identifier
             config: Rate limit configuration (uses default if not provided)
             cost: Request cost (default 1)
@@ -230,6 +237,7 @@ class RateLimiter:
             Rate limit check result
         """
         return await self._check_rate_limit(
+            project_id=project_id,
             identifier=str(user_id),
             limit_type="user",
             config=config or self.DEFAULT_USER_LIMIT,
@@ -238,7 +246,7 @@ class RateLimiter:
 
     async def check_project_rate_limit(
         self,
-        project_id: Union[str, UUID],
+        project_id: UUID,
         config: Optional[RateLimitConfig] = None,
         cost: int = 1,
     ) -> RateLimitResult:
@@ -246,7 +254,7 @@ class RateLimiter:
         Check rate limit for project using sliding window algorithm.
 
         Args:
-            project_id: Project identifier
+            project_id: Project identifier for isolation
             config: Rate limit configuration (uses default if not provided)
             cost: Request cost (default 1)
 
@@ -254,6 +262,7 @@ class RateLimiter:
             Rate limit check result
         """
         return await self._check_rate_limit(
+            project_id=project_id,
             identifier=str(project_id),
             limit_type="project",
             config=config or self.DEFAULT_PROJECT_LIMIT,
@@ -261,12 +270,17 @@ class RateLimiter:
         )
 
     async def check_ip_rate_limit(
-        self, ip_address: str, config: Optional[RateLimitConfig] = None, cost: int = 1
+        self,
+        project_id: UUID,
+        ip_address: str,
+        config: Optional[RateLimitConfig] = None,
+        cost: int = 1,
     ) -> RateLimitResult:
         """
         Check rate limit for IP address using sliding window algorithm.
 
         Args:
+            project_id: Project identifier for isolation
             ip_address: IP address
             config: Rate limit configuration (uses default if not provided)
             cost: Request cost (default 1)
@@ -275,6 +289,7 @@ class RateLimiter:
             Rate limit check result
         """
         return await self._check_rate_limit(
+            project_id=project_id,
             identifier=ip_address,
             limit_type="ip",
             config=config or self.DEFAULT_IP_LIMIT,
@@ -282,12 +297,17 @@ class RateLimiter:
         )
 
     async def check_endpoint_rate_limit(
-        self, endpoint: str, user_id: Optional[Union[str, UUID]] = None, cost: int = 1
+        self,
+        project_id: UUID,
+        endpoint: str,
+        user_id: Optional[Union[str, UUID]] = None,
+        cost: int = 1,
     ) -> RateLimitResult:
         """
         Check rate limit for specific API endpoint.
 
         Args:
+            project_id: Project identifier for isolation
             endpoint: API endpoint path
             user_id: Optional user ID for user-specific limits
             cost: Request cost (default 1)
@@ -305,16 +325,26 @@ class RateLimiter:
             identifier = f"{identifier}:user:{user_id}"
 
         return await self._check_rate_limit(
-            identifier=identifier, limit_type="endpoint", config=config, cost=cost
+            project_id=project_id,
+            identifier=identifier,
+            limit_type="endpoint",
+            config=config,
+            cost=cost,
         )
 
     async def _check_rate_limit(
-        self, identifier: str, limit_type: str, config: RateLimitConfig, cost: int = 1
+        self,
+        project_id: UUID,
+        identifier: str,
+        limit_type: str,
+        config: RateLimitConfig,
+        cost: int = 1,
     ) -> RateLimitResult:
         """
         Core rate limiting check using sliding window algorithm.
 
         Args:
+            project_id: Project identifier for isolation
             identifier: Rate limit identifier
             limit_type: Type of rate limit
             config: Rate limit configuration
@@ -326,6 +356,7 @@ class RateLimiter:
         await self.initialize()
 
         with tracer.start_as_current_span("rate_limiter.check") as span:
+            span.set_attribute("project_id", str(project_id))
             span.set_attribute("identifier", identifier)
             span.set_attribute("limit_type", limit_type)
             span.set_attribute("limit", config.requests_per_window)
@@ -333,20 +364,31 @@ class RateLimiter:
             span.set_attribute("cost", cost)
 
             try:
-                key = f"rate_limit:{limit_type}:{identifier}:{config.window_seconds}"
-                now = int(time.time())
+                # Load scripts for this project if not already loaded
+                script_key = f"sliding_window:{project_id}"
+                if script_key not in self._lua_scripts:
+                    await self._load_lua_scripts(project_id)
 
-                async with self._redis_factory.get_connection() as redis_client:
+                key = f"rate_limit:{limit_type}:{identifier}:{config.window_seconds}"
+                now = int(time.time() * 1000)  # Use milliseconds for better granularity
+
+                async with self._redis_factory.get_connection(
+                    project_id
+                ) as redis_client:
                     # Use sliding window algorithm with atomic Lua script
                     result = await redis_client.evalsha(
-                        self._lua_scripts["sliding_window"],
+                        self._lua_scripts[script_key],
                         1,  # number of keys
                         key,
-                        config.window_seconds,
+                        config.window_seconds * 1000,  # Convert window to milliseconds
                         now,
                         cost,
                         config.requests_per_window,
                     )
+
+                    # Debug: log the Redis state after script execution
+                    current_count = await redis_client.zcard(key)
+                    span.set_attribute("redis_current_count", current_count)
 
                 allowed, current_count, remaining, reset_seconds, limit = result
 
@@ -418,12 +460,17 @@ class RateLimiter:
                 )
 
     async def get_rate_limit_status(
-        self, identifier: str, limit_type: str, config: RateLimitConfig
+        self,
+        project_id: UUID,
+        identifier: str,
+        limit_type: str,
+        config: RateLimitConfig,
     ) -> RateLimitResult:
         """
         Get current rate limit status without consuming tokens.
 
         Args:
+            project_id: Project identifier for isolation
             identifier: Rate limit identifier
             limit_type: Type of rate limit
             config: Rate limit configuration
@@ -435,10 +482,10 @@ class RateLimiter:
 
         try:
             key = f"rate_limit:{limit_type}:{identifier}:{config.window_seconds}"
-            now = int(time.time())
-            window_start = now - config.window_seconds
+            now = int(time.time() * 1000)  # Use milliseconds
+            window_start = now - config.window_seconds * 1000
 
-            async with self._redis_factory.get_connection() as redis_client:
+            async with self._redis_factory.get_connection(project_id) as redis_client:
                 # Count requests in current window
                 current_count = await redis_client.zcount(key, window_start, now)
 
@@ -446,13 +493,12 @@ class RateLimiter:
                 oldest = await redis_client.zrange(key, 0, 0, withscores=True)
                 reset_seconds = config.window_seconds
 
-                if oldest and oldest[0]:
-                    oldest_time = (
-                        int(oldest[1][1])
-                        if isinstance(oldest[1], (list, tuple))
-                        else int(oldest[1])
+                if oldest:
+                    # oldest is [(member, score)] when withscores=True
+                    oldest_time = int(oldest[0][1])
+                    reset_seconds = (
+                        max(0, oldest_time + config.window_seconds * 1000 - now) // 1000
                     )
-                    reset_seconds = max(0, oldest_time + config.window_seconds - now)
 
             return RateLimitResult(
                 allowed=True,  # Status check doesn't consume
@@ -483,12 +529,13 @@ class RateLimiter:
             )
 
     async def reset_rate_limit(
-        self, identifier: str, limit_type: str, window_seconds: int
+        self, project_id: UUID, identifier: str, limit_type: str, window_seconds: int
     ) -> bool:
         """
         Reset rate limit for identifier.
 
         Args:
+            project_id: Project identifier for isolation
             identifier: Rate limit identifier
             limit_type: Type of rate limit
             window_seconds: Window size in seconds
@@ -501,58 +548,98 @@ class RateLimiter:
         try:
             key = f"rate_limit:{limit_type}:{identifier}:{window_seconds}"
 
-            async with self._redis_factory.get_connection() as redis_client:
+            async with self._redis_factory.get_connection(project_id) as redis_client:
                 await redis_client.delete(key)
 
-            logger.info(f"Reset rate limit for {limit_type}:{identifier}")
+            logger.info(
+                f"Reset rate limit for project {project_id}:{limit_type}:{identifier}"
+            )
             return True
 
         except Exception as e:
             logger.error(f"Failed to reset rate limit for {identifier}: {e}")
             return False
 
-    async def get_rate_limit_metrics(self) -> Dict[str, Any]:
+    async def get_rate_limit_metrics(
+        self, project_id: Optional[UUID] = None
+    ) -> Dict[str, Any]:
         """
         Get rate limiting metrics for monitoring.
+
+        Args:
+            project_id: Optional project identifier for project-specific metrics
 
         Returns:
             Rate limiting metrics and statistics
         """
         try:
-            async with self._redis_factory.get_connection() as redis_client:
-                # Get all rate limit keys
-                keys = await redis_client.keys("rate_limit:*")
+            if project_id:
+                async with self._redis_factory.get_connection(
+                    project_id
+                ) as redis_client:
+                    pattern = "rate_limit:*"
+                    keys = []
 
-                metrics = {
-                    "total_active_limits": len(keys),
-                    "limits_by_type": {},
-                    "memory_usage": 0,
-                    "timestamp": datetime.utcnow().isoformat(),
-                }
-
-                # Count limits by type
-                for key in keys:
-                    parts = key.split(":")
-                    if len(parts) >= 3:
-                        limit_type = parts[1]
-                        metrics["limits_by_type"][limit_type] = (
-                            metrics["limits_by_type"].get(limit_type, 0) + 1
+                    # Use SCAN to avoid blocking Redis
+                    cursor = 0
+                    while True:
+                        cursor, batch_keys = await redis_client.scan(
+                            cursor=cursor, match=pattern, count=100
                         )
+                        keys.extend(batch_keys)
+                        if cursor == 0:
+                            break
 
-                # Get memory usage for rate limit keys
-                if keys:
-                    memory_info = await redis_client.memory_usage(*keys)
-                    metrics["memory_usage"] = (
-                        sum(memory_info)
-                        if isinstance(memory_info, list)
-                        else memory_info
-                    )
+                    metrics = {
+                        "total_active_limits": len(keys),
+                        "limits_by_type": {},
+                        "memory_usage": 0,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "project_id": str(project_id),
+                    }
 
-                return metrics
+                    # Count limits by type
+                    for key in keys:
+                        parts = key.split(":")
+                        if len(parts) >= 3:
+                            limit_type = parts[1]
+                            metrics["limits_by_type"][limit_type] = (
+                                metrics["limits_by_type"].get(limit_type, 0) + 1
+                            )
+
+                    # Get memory usage per key (calling memory_usage individually)
+                    if keys:
+                        total_memory = 0
+                        for key in keys:
+                            try:
+                                # Need to call on underlying redis client with prefixed key
+                                prefixed_key = redis_client._make_key(key)
+                                mem = await redis_client._redis.memory_usage(
+                                    prefixed_key
+                                )
+                                if mem is not None:
+                                    total_memory += mem
+                            except Exception as e:
+                                logger.debug(
+                                    f"Failed to get memory usage for key {key}: {e}"
+                                )
+                                continue
+                        metrics["memory_usage"] = total_memory
+
+                    return metrics
+            else:
+                # Global metrics not supported with project isolation
+                return {
+                    "error": "Global metrics not supported with project isolation. Please provide project_id.",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
 
         except Exception as e:
             logger.error(f"Failed to get rate limit metrics: {e}")
-            return {"error": str(e), "timestamp": datetime.utcnow().isoformat()}
+            return {
+                "error": str(e),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
 
 
 # Global rate limiter instance

@@ -113,7 +113,8 @@ class RedisHealthChecker:
 
         # Background health checking
         self._health_check_task: Optional[asyncio.Task] = None
-        self._latest_health_status: Optional[RedisHealthStatus] = None
+        # Health check caching - per project
+        self._latest_health_status: Dict[UUID, RedisHealthStatus] = {}
 
         logger.info(
             "Redis health checker initialized",
@@ -151,9 +152,7 @@ class RedisHealthChecker:
                 logger.error("Redis health check error", error=str(e))
                 await asyncio.sleep(60)
 
-    async def perform_full_health_check(
-        self, project_id: Optional[UUID] = None
-    ) -> RedisHealthStatus:
+    async def perform_full_health_check(self, project_id: UUID) -> RedisHealthStatus:
         """
         Perform comprehensive health check of Redis infrastructure.
 
@@ -191,8 +190,9 @@ class RedisHealthChecker:
             alerts=self._generate_health_alerts(checks),
         )
 
-        # Store latest status
-        self._latest_health_status = health_status
+        # Store latest status - per project
+        if project_id:
+            self._latest_health_status[project_id] = health_status
 
         # Log health status
         await self._log_health_status(health_status)
@@ -208,15 +208,13 @@ class RedisHealthChecker:
 
         return health_status
 
-    async def _check_basic_connectivity(
-        self, project_id: Optional[UUID] = None
-    ) -> HealthCheckResult:
+    async def _check_basic_connectivity(self, project_id: UUID) -> HealthCheckResult:
         """Check basic Redis connectivity with response time."""
         start_time = time.time()
 
         try:
             async with redis_connection_factory.get_connection(
-                project_id
+                str(project_id)
             ) as redis_client:
                 # Test basic PING command
                 ping_result = await asyncio.wait_for(
@@ -303,15 +301,13 @@ class RedisHealthChecker:
                 project_id=project_id,
             )
 
-    async def _check_memory_usage(
-        self, project_id: Optional[UUID] = None
-    ) -> HealthCheckResult:
+    async def _check_memory_usage(self, project_id: UUID) -> HealthCheckResult:
         """Check Redis memory usage."""
         start_time = time.time()
 
         try:
             async with redis_connection_factory.get_connection(
-                project_id
+                str(project_id)
             ) as redis_client:
                 # Get memory info
                 memory_info = await redis_client.info("memory")
@@ -367,9 +363,7 @@ class RedisHealthChecker:
                 project_id=project_id,
             )
 
-    async def _check_connection_pool(
-        self, project_id: Optional[UUID] = None
-    ) -> HealthCheckResult:
+    async def _check_connection_pool(self, project_id: UUID) -> HealthCheckResult:
         """Check Redis connection pool health."""
         start_time = time.time()
 
@@ -379,21 +373,22 @@ class RedisHealthChecker:
 
             # Get Redis client info
             async with redis_connection_factory.get_connection(
-                project_id
+                str(project_id)
             ) as redis_client:
                 client_info = await redis_client.info("clients")
                 connected_clients = client_info.get("connected_clients", 0)
 
             # Get connection pool metrics
             pools = factory_metrics.get("pools", {})
-            default_pool = pools.get("default", {})
-            max_connections = default_pool.get("max_connections", 10)
-            created_connections = default_pool.get("created_connections", 0)
-
-            # Calculate connection utilization
-            connection_utilization = 0
-            if max_connections > 0:
-                connection_utilization = connected_clients / max_connections
+            pool_key = f"project:{project_id}"
+            pool_metrics = pools.get(pool_key) or pools.get("default", {})
+            max_connections = pool_metrics.get("max_connections", 10)
+            created_connections = pool_metrics.get("created_connections", 0)
+            available_connections = pool_metrics.get("available_connections", 0)
+            in_use = max(0, created_connections - available_connections)
+            connection_utilization = (
+                (in_use / max_connections) if max_connections > 0 else 0
+            )
 
             # Determine status
             if connection_utilization >= self.connection_pool_critical_threshold:
@@ -421,10 +416,13 @@ class RedisHealthChecker:
                     "connected_clients": connected_clients,
                     "max_connections": max_connections,
                     "created_connections": created_connections,
+                    "available_connections": available_connections,
+                    "in_use_connections": in_use,
                     "connection_utilization": connection_utilization,
                     "connection_utilization_percentage": connection_utilization * 100,
                     "warning_threshold": self.connection_pool_warning_threshold * 100,
                     "critical_threshold": self.connection_pool_critical_threshold * 100,
+                    "pool_key": pool_key,
                     "pools_count": len(pools),
                 },
                 project_id=project_id,
@@ -441,15 +439,13 @@ class RedisHealthChecker:
                 project_id=project_id,
             )
 
-    async def _check_performance(
-        self, project_id: Optional[UUID] = None
-    ) -> HealthCheckResult:
+    async def _check_performance(self, project_id: UUID) -> HealthCheckResult:
         """Check Redis performance metrics."""
         start_time = time.time()
 
         try:
             async with redis_connection_factory.get_connection(
-                project_id
+                str(project_id)
             ) as redis_client:
                 # Get stats info
                 stats_info = await redis_client.info("stats")
@@ -517,15 +513,13 @@ class RedisHealthChecker:
                 project_id=project_id,
             )
 
-    async def _check_persistence(
-        self, project_id: Optional[UUID] = None
-    ) -> HealthCheckResult:
+    async def _check_persistence(self, project_id: UUID) -> HealthCheckResult:
         """Check Redis persistence configuration."""
         start_time = time.time()
 
         try:
             async with redis_connection_factory.get_connection(
-                project_id
+                str(project_id)
             ) as redis_client:
                 # Get persistence info
                 persistence_info = await redis_client.info("persistence")
@@ -625,13 +619,11 @@ class RedisHealthChecker:
         # All checks are healthy
         return HealthStatus.HEALTHY
 
-    async def _get_redis_server_info(
-        self, project_id: Optional[UUID] = None
-    ) -> Dict[str, Any]:
+    async def _get_redis_server_info(self, project_id: UUID) -> Dict[str, Any]:
         """Get Redis server information."""
         try:
             async with redis_connection_factory.get_connection(
-                project_id
+                str(project_id)
             ) as redis_client:
                 server_info = await redis_client.info("server")
                 return {
@@ -722,11 +714,11 @@ class RedisHealthChecker:
             logger.warning("Redis health alert", alert=alert)
 
     async def get_latest_health_status(
-        self, project_id: Optional[UUID] = None
+        self, project_id: UUID
     ) -> Optional[RedisHealthStatus]:
         """Get the latest health status."""
-        if self._latest_health_status:
-            return self._latest_health_status
+        if project_id in self._latest_health_status:
+            return self._latest_health_status[project_id]
 
         # If no cached status, perform a new health check
         return await self.perform_full_health_check(project_id)
@@ -734,7 +726,7 @@ class RedisHealthChecker:
     async def check_specific_component(
         self,
         check_type: HealthCheckType,
-        project_id: Optional[UUID] = None,
+        project_id: UUID,
     ) -> HealthCheckResult:
         """Check a specific component."""
         check_methods = {
@@ -744,6 +736,18 @@ class RedisHealthChecker:
             HealthCheckType.PERFORMANCE: self._check_performance,
             HealthCheckType.PERSISTENCE: self._check_persistence,
         }
+
+        # Handle REPLICATION check type - not implemented yet
+        if check_type == HealthCheckType.REPLICATION:
+            # TODO: Implement Redis replication health check
+            # This should check replication lag, slave status, sync status, etc.
+            return HealthCheckResult(
+                check_type=HealthCheckType.REPLICATION,
+                status=HealthStatus.UNKNOWN,
+                message="Replication health check is not implemented yet",
+                details={"implementation_status": "TODO", "error": "Not implemented"},
+                project_id=project_id,
+            )
 
         check_method = check_methods.get(check_type)
         if not check_method:

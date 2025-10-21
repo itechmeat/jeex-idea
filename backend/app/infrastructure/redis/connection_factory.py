@@ -8,7 +8,7 @@ Provides connection pooling, health checks, and automatic reconnection.
 import asyncio
 import logging
 import time
-from typing import Dict, Any, Union
+from typing import Dict, Any, Union, Optional
 from uuid import UUID
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
@@ -150,7 +150,7 @@ class RedisConnectionFactory:
                 )
 
     @asynccontextmanager
-    async def get_connection(self, project_id: str):
+    async def get_connection(self, project_id: Union[str, UUID]):
         """
         Get Redis connection with project isolation.
 
@@ -165,20 +165,25 @@ class RedisConnectionFactory:
             RedisConnectionException: If connection fails
             RedisCircuitBreakerOpenException: If circuit breaker is open
         """
-        # Validate project_id format
+        # Validate and normalize project_id format
         try:
-            UUID(project_id)
+            if isinstance(project_id, UUID):
+                project_id_str = str(project_id)
+            else:
+                # Validate string format
+                UUID(project_id)
+                project_id_str = project_id
         except ValueError:
             raise RedisProjectIsolationException(
-                message=f"Invalid project_id format: {project_id}. Must be a valid UUID string."
+                message=f"Invalid project_id format: {project_id}. Must be a valid UUID string or UUID object."
             )
         await self.initialize()
 
         # Use project-specific pool
-        pool_key = f"project:{project_id}"
+        pool_key = f"project:{project_id_str}"
 
         if pool_key not in self._pools:
-            await self._create_project_pool(project_id)
+            await self._create_project_pool(project_id_str)
 
         pool = self._pools[pool_key]
 
@@ -203,6 +208,45 @@ class RedisConnectionFactory:
                 logger.error(f"Redis connection error: {e}")
                 raise RedisConnectionException(
                     message=f"Redis connection failed: {str(e)}", original_error=e
+                )
+            else:
+                raise
+
+    @asynccontextmanager
+    async def get_admin_connection(self):
+        """
+        Get Redis connection for administrative operations without project isolation.
+
+        Use this for system-level operations like script loading, health checks,
+        or operations that span across projects.
+
+        Yields:
+            Redis client instance without project isolation
+
+        Raises:
+            RedisConnectionException: If connection fails
+            RedisCircuitBreakerOpenException: If circuit breaker is open
+        """
+        await self.initialize()
+
+        try:
+            # Create Redis client with circuit breaker protection using default pool
+            redis_client = await self._circuit_breaker.call(
+                lambda: Redis(connection_pool=self._default_pool)
+            )
+
+            yield redis_client
+
+        except Exception as e:
+            if isinstance(e, RedisCircuitBreakerOpenException):
+                raise
+            elif isinstance(
+                e, (RedisConnectionError, RedisAuthError, RedisTimeoutError)
+            ):
+                logger.error(f"Redis admin connection error: {e}")
+                raise RedisConnectionException(
+                    message=f"Redis admin connection failed: {str(e)}",
+                    original_error=e,
                 )
             else:
                 raise
@@ -333,6 +377,7 @@ class RedisConnectionFactory:
                 pool_key: {
                     "max_connections": pool.max_connections,
                     "created_connections": getattr(pool, "_created_connections", 0),
+                    "available_connections": getattr(pool, "_available_connections", 0),
                 }
                 for pool_key, pool in self._pools.items()
             },
@@ -427,6 +472,87 @@ class ProjectIsolatedRedisClient:
         """Increment key by amount with project isolation."""
         return await self._redis.incrby(self._make_key(key), amount, **kwargs)
 
+    async def llen(self, name: str, **kwargs) -> int:
+        """Get list length with project isolation."""
+        return await self._redis.llen(self._make_key(name), **kwargs)
+
+    async def lrem(self, name: str, count: int, value, **kwargs) -> int:
+        """Remove list elements with project isolation."""
+        return await self._redis.lrem(self._make_key(name), count, value, **kwargs)
+
+    async def zadd(self, name: str, mapping: dict, **kwargs) -> int:
+        """Add to sorted set with project isolation."""
+        return await self._redis.zadd(self._make_key(name), mapping, **kwargs)
+
+    async def zrem(self, name: str, *values, **kwargs) -> int:
+        """Remove from sorted set with project isolation."""
+        return await self._redis.zrem(self._make_key(name), *values, **kwargs)
+
+    async def zrange(
+        self, name: str, start: int, end: int, withscores: bool = False, **kwargs
+    ) -> list:
+        """Get sorted set range with project isolation."""
+        return await self._redis.zrange(
+            self._make_key(name), start, end, withscores=withscores, **kwargs
+        )
+
+    async def zcard(self, name: str, **kwargs) -> int:
+        """Get sorted set cardinality with project isolation."""
+        return await self._redis.zcard(self._make_key(name), **kwargs)
+
+    async def zcount(self, name: str, min: float, max: float, **kwargs) -> int:
+        """Count sorted set members by score with project isolation."""
+        return await self._redis.zcount(self._make_key(name), min, max, **kwargs)
+
+    async def hmset(self, name: str, mapping: dict, **kwargs) -> bool:
+        """Set hash fields with project isolation."""
+        return await self._redis.hmset(self._make_key(name), mapping, **kwargs)
+
+    async def scan(
+        self, cursor: int = 0, match: str = None, count: int = None, **kwargs
+    ):
+        """
+        Scan keys with project isolation.
+
+        Automatically prefixes the match pattern with project prefix.
+        Returns original keys without the prefix for convenience.
+        """
+        # Prefix the match pattern
+        if match:
+            prefixed_match = self._make_key(match)
+        else:
+            prefixed_match = f"{self._key_prefix}*"
+
+        cursor, keys = await self._redis.scan(
+            cursor=cursor, match=prefixed_match, count=count, **kwargs
+        )
+
+        # Remove prefix from returned keys
+        unprefixed_keys = [self._extract_original_key(key) for key in keys]
+        return cursor, unprefixed_keys
+
+    async def evalsha(self, sha: str, numkeys: int, *keys_and_args, **kwargs):
+        """
+        Execute Lua script with project isolation.
+
+        Automatically prefixes keys (first numkeys arguments) with project prefix.
+        """
+        # Split arguments into keys and args
+        keys = list(keys_and_args[:numkeys])
+        args = list(keys_and_args[numkeys:])
+
+        # Prefix all keys
+        prefixed_keys = [self._make_key(key) for key in keys]
+
+        # Combine back
+        all_args = prefixed_keys + args
+
+        return await self._redis.evalsha(sha, numkeys, *all_args, **kwargs)
+
+    async def script_load(self, script: str, **kwargs) -> str:
+        """Load Lua script (no project isolation needed - scripts are global)."""
+        return await self._redis.script_load(script, **kwargs)
+
     async def ping(self, **kwargs) -> bool:
         """Ping Redis server."""
         return await self._redis.ping(**kwargs)
@@ -435,17 +561,13 @@ class ProjectIsolatedRedisClient:
         """Get Redis server information."""
         return await self._redis.info(section, **kwargs)
 
-    # Delegate other methods to underlying client
+    # Block unknown methods to preserve project isolation
     def __getattr__(self, name):
-        """Delegate other attributes to underlying Redis client."""
-        attr = getattr(self._redis, name)
-        if callable(attr):
-            # For callable methods, we need to wrap them to handle key isolation
-            def wrapped_method(*args, **kwargs):
-                return attr(*args, **kwargs)
-
-            return wrapped_method
-        return attr
+        # Disallow arbitrary delegation to preserve project isolation
+        raise RedisProjectIsolationException(
+            message=f"Method '{name}' is not allowed via ProjectIsolatedRedisClient. "
+            f"Add an explicit wrapper that enforces key prefixing."
+        )
 
 
 # Global connection factory instance

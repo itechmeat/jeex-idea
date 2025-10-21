@@ -504,12 +504,12 @@ async def get_prometheus_rules():
     """
     Get Prometheus alerting rules for Redis monitoring.
 
-    Returns YAML configuration for Prometheus alerting rules.
+    Returns JSON configuration for Prometheus alerting rules.
     """
     try:
         rules_config = redis_dashboard_configuration.get_prometheus_rules_config()
 
-        return JSONResponse(content=rules_config, media_type="application/x-yaml")
+        return JSONResponse(content=rules_config, media_type="application/json")
 
     except Exception as e:
         logger.error("Failed to get Prometheus rules", error=str(e))

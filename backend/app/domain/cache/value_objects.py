@@ -11,7 +11,7 @@ from enum import Enum
 from typing import Union, Optional, Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class CacheEntryStatus(str, Enum):
@@ -113,7 +113,7 @@ class CacheKey:
         if limit_type not in ["user", "project", "ip"]:
             raise ValueError("Invalid rate limit type")
         # Extract numeric seconds from window.value (e.g., "60s" -> "60")
-        seconds = window.value.rstrip('s')
+        seconds = window.value.rstrip("s")
         return cls(f"rate_limit:{limit_type}:{identifier}:{seconds}")
 
     @classmethod
@@ -227,22 +227,31 @@ class CacheMetrics(BaseModel):
     data_size_bytes: Optional[int] = Field(
         None, description="Size of cached data in bytes"
     )
-    project_id: Optional[str] = Field(
-        None, description="Project ID for isolation tracking"
-    )
+    project_id: str = Field(..., description="Project ID for isolation tracking")
     error: Optional[str] = Field(None, description="Error message if operation failed")
 
-    @validator("execution_time_ms")
+    @field_validator("execution_time_ms", mode="before")
+    @classmethod
     def validate_execution_time(cls, v):
         if v < 0:
             raise ValueError("Execution time cannot be negative")
         return v
 
-    @validator("data_size_bytes")
+    @field_validator("data_size_bytes", mode="before")
+    @classmethod
     def validate_data_size(cls, v):
         if v is not None and v < 0:
             raise ValueError("Data size cannot be negative")
         return v
+
+    @field_validator("project_id", mode="before")
+    @classmethod
+    def validate_project_id(cls, v):
+        try:
+            UUID(str(v))
+            return str(v)
+        except (ValueError, TypeError):
+            raise ValueError("project_id must be a valid UUID string")
 
 
 class RateLimitConfig(BaseModel):

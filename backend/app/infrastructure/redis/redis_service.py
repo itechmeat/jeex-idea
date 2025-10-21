@@ -8,7 +8,7 @@ automatic reconnection, and project isolation enforcement.
 import asyncio
 import logging
 import time
-from typing import Dict, Any, Union, List
+from typing import Dict, Any, Union, List, Optional
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from uuid import UUID
@@ -129,6 +129,30 @@ class RedisService:
         async with redis_connection_factory.get_connection(project_id) as redis_client:
             yield redis_client
 
+    @asynccontextmanager
+    async def _get_system_connection(self):
+        """
+        Get system-level Redis connection without project isolation.
+
+        Used internally for health checks and system monitoring.
+        NOT for application data access.
+
+        Yields:
+            Raw Redis client for system operations
+        """
+        await self.initialize()
+
+        # Use default pool directly for system operations
+        if not redis_connection_factory._default_pool:
+            raise RedisConnectionException(message="Redis default pool not initialized")
+
+        redis_client = Redis(connection_pool=redis_connection_factory._default_pool)
+        try:
+            yield redis_client
+        finally:
+            # Client cleanup is handled by connection pool
+            pass
+
     async def health_check(self) -> Dict[str, Any]:
         """
         Perform comprehensive health check.
@@ -198,7 +222,7 @@ class RedisService:
         test_results = {"status": "passed", "operations": {}, "response_times_ms": {}}
 
         try:
-            async with self.get_connection() as redis_client:
+            async with self._get_system_connection() as redis_client:
                 # Test ping
                 start_time = time.time()
                 await redis_client.ping()
@@ -228,7 +252,7 @@ class RedisService:
     async def _get_redis_info(self) -> Dict[str, Any]:
         """Get Redis server information."""
         try:
-            async with self.get_connection() as redis_client:
+            async with self._get_system_connection() as redis_client:
                 info = await redis_client.info()
                 return info
         except Exception as e:
@@ -281,11 +305,14 @@ class RedisService:
         while True:
             try:
                 await asyncio.sleep(self.config.health_check_interval)
+
+                # Capture previous status BEFORE calling health_check()
+                prev = self._last_health_check
                 health_status = await self.health_check()
 
                 # Log health status changes
-                if self._last_health_check:
-                    last_status = self._last_health_check.get("status", "unknown")
+                if prev:
+                    last_status = prev.get("status", "unknown")
                     current_status = health_status.get("status", "unknown")
                     if last_status != current_status:
                         logger.info(
@@ -376,7 +403,12 @@ class RedisService:
             span.set_status(Status(StatusCode.ERROR, str(last_exception)))
             raise RedisException(
                 message=f"Redis operation failed after {self.config.max_retries + 1} attempts: {operation}",
-                original_error=last_exception,
+                error_code="REDIS_OPERATION_FAILED",
+                details={
+                    "original_error": str(last_exception),
+                    "operation": operation,
+                    "attempts": self.config.max_retries + 1,
+                },
             )
 
     async def close(self) -> None:

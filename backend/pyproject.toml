@@ -118,7 +118,6 @@ markers = [
     "slow: mark test as slow running",
     "unit: mark test as unit test",
 ]
-asyncio_mode = "auto"
 
 [tool.coverage.run]
 source = ["app"]

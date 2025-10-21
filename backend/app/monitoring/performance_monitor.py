@@ -306,7 +306,7 @@ class RedisPerformanceMonitor:
             # Get current connection metrics
             factory_metrics = redis_connection_factory.get_metrics()
 
-            async with redis_connection_factory.get_connection() as redis_client:
+            async with redis_connection_factory.get_admin_connection() as redis_client:
                 client_info = await redis_client.info("clients")
                 connected_clients = client_info.get("connected_clients", 0)
 
@@ -350,7 +350,7 @@ class RedisPerformanceMonitor:
     async def _analyze_memory_performance(self) -> None:
         """Analyze memory performance."""
         try:
-            async with redis_connection_factory.get_connection() as redis_client:
+            async with redis_connection_factory.get_admin_connection() as redis_client:
                 # Get memory and stats info
                 memory_info = await redis_client.info("memory")
                 stats_info = await redis_client.info("stats")
@@ -363,10 +363,8 @@ class RedisPerformanceMonitor:
                     used_memory_rss / used_memory if used_memory > 0 else 1
                 )
 
-                # Calculate memory percentage
-                memory_percentage = (
-                    (used_memory / max_memory * 100) if max_memory > 0 else 0
-                )
+                # Calculate memory percentage as fraction (0..1)
+                memory_percentage = (used_memory / max_memory) if max_memory > 0 else 0
 
                 # Get cache statistics
                 keyspace_hits = stats_info.get("keyspace_hits", 0)
@@ -401,7 +399,7 @@ class RedisPerformanceMonitor:
                 self._memory_history.append(memory_stats)
 
                 # Log memory issues
-                if memory_percentage > 90:
+                if memory_percentage > 0.9:
                     logger.warning(
                         "Critical memory usage",
                         memory_percentage=memory_percentage,
@@ -508,7 +506,7 @@ class RedisPerformanceMonitor:
                     current_value=latest_memory.memory_percentage,
                     threshold=self.poor_memory_usage,
                     performance_level=performance_level,
-                    message=f"Memory usage is {latest_memory.memory_percentage:.1f}% of limit",
+                    message=f"Memory usage is {latest_memory.memory_percentage * 100:.1f}% of limit",
                     recommendations=recommendations,
                 )
 
@@ -594,7 +592,9 @@ class RedisPerformanceMonitor:
             "timestamp": datetime.utcnow().isoformat(),
             "project_id": str(project_id) if project_id else None,
             "performance_summary": await self._get_performance_summary(),
-            "command_performance": await self._get_command_performance_summary(),
+            "command_performance": await self._get_command_performance_summary(
+                project_id
+            ),
             "connection_performance": await self._get_connection_performance_summary(),
             "memory_performance": await self._get_memory_performance_summary(),
             "performance_insights": await self._get_performance_insights(),
@@ -674,7 +674,9 @@ class RedisPerformanceMonitor:
             else:
                 return PerformanceLevel.CRITICAL
 
-    async def _get_command_performance_summary(self) -> Dict[str, Any]:
+    async def _get_command_performance_summary(
+        self, project_id: Optional[UUID] = None
+    ) -> Dict[str, Any]:
         """Get command performance summary."""
         command_summary = {}
 
@@ -686,6 +688,7 @@ class RedisPerformanceMonitor:
                 e
                 for e in executions
                 if e["timestamp"] > datetime.utcnow() - timedelta(minutes=5)
+                and (project_id is None or e["project_id"] == project_id)
             ]
 
             if not recent_executions:
@@ -714,6 +717,7 @@ class RedisPerformanceMonitor:
                         self.poor_response_time_ms,
                     ],
                 ).value,
+                "project_id": str(project_id) if project_id else None,
             }
 
         return command_summary

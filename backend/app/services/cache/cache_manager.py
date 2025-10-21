@@ -5,6 +5,7 @@ High-level cache management service that orchestrates domain entities,
 repositories, and services for cache operations.
 """
 
+import json
 import logging
 import time
 from datetime import datetime, timedelta
@@ -12,6 +13,8 @@ from typing import List, Optional, Dict, Any, Union
 from uuid import UUID
 
 from opentelemetry import trace
+
+from ...constants import SYSTEM_PROJECT_ID
 
 from ...domain.cache.entities import ProjectCache, UserSession, Progress
 from ...domain.cache.value_objects import (
@@ -30,6 +33,7 @@ from ...domain.cache.domain_services import (
 )
 from ...infrastructure.repositories.cache_repository import cache_repository
 from ...infrastructure.redis.exceptions import RedisException
+from ...infrastructure.redis.redis_service import redis_service
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -45,16 +49,23 @@ class CacheManager:
 
     def __init__(self):
         self.repository = cache_repository
+        # Initialize services with actual repository instances
+        project_cache_repo = self.repository.project_cache
+        user_session_repo = self.repository.user_session
+        progress_repo = self.repository.progress
+        rate_limit_repo = self.repository.rate_limit
+        health_repo = self.repository.health
+
         self.invalidation_service = CacheInvalidationService(
-            self.repository.project_cache,
-            self.repository.user_session,
-            self.repository.progress,
+            project_cache_repo,
+            user_session_repo,
+            progress_repo,
         )
         self.session_service = SessionManagementService(
-            self.repository.user_session, self.repository.project_cache
+            user_session_repo, project_cache_repo
         )
-        self.rate_limit_service = RateLimitingService(self.repository.rate_limit)
-        self.health_service = CacheHealthService(self.repository.health)
+        self.rate_limit_service = RateLimitingService(rate_limit_repo)
+        self.health_service = CacheHealthService(health_repo)
 
     async def initialize(self) -> None:
         """Initialize cache manager and underlying connections."""
@@ -735,7 +746,9 @@ class CacheManager:
                 "ttl": cache_ttl.seconds,
             }
 
-            async with redis_service.get_connection() as redis_client:
+            async with redis_service.get_connection(
+                str(SYSTEM_PROJECT_ID)
+            ) as redis_client:
                 await redis_client.setex(
                     key.value, cache_ttl.seconds, json.dumps(config_data, default=str)
                 )
@@ -760,7 +773,9 @@ class CacheManager:
         try:
             key = CacheKey.agent_config(agent_type)
 
-            async with redis_service.get_connection() as redis_client:
+            async with redis_service.get_connection(
+                str(SYSTEM_PROJECT_ID)
+            ) as redis_client:
                 config_data = await redis_client.get(key.value)
 
                 if config_data:

@@ -45,10 +45,14 @@ class RedisConnectionException(RedisException):
             details["port"] = port
         if original_error:
             details["original_error"] = str(original_error)
+            details["original_error_type"] = type(original_error).__name__
 
         super().__init__(
             message=message, error_code="REDIS_CONNECTION_ERROR", details=details
         )
+        # Preserve exception context for debugging (exception chaining)
+        if original_error:
+            self.__cause__ = original_error
 
 
 class RedisAuthenticationException(RedisException):
@@ -121,13 +125,17 @@ class RedisCircuitBreakerOpenException(RedisException):
 class RedisKeyNotFoundException(RedisException):
     """Raised when expected Redis key is not found."""
 
-    def __init__(self, key: str, project_id: Optional[str] = None):
-        details = {"key": key}
-        if project_id:
-            details["project_id"] = project_id
+    def __init__(self, key: str, project_id: str):
+        """Initialize exception.
+
+        Args:
+            key: Redis key that was not found
+            project_id: Project ID for isolation (REQUIRED)
+        """
+        details = {"key": key, "project_id": project_id}
 
         super().__init__(
-            message=f"Redis key not found: {key}",
+            message=f"Redis key not found: {key} (project: {project_id})",
             error_code="REDIS_KEY_NOT_FOUND",
             details=details,
         )
@@ -139,12 +147,17 @@ class RedisProjectIsolationException(RedisException):
     def __init__(
         self,
         message: str,
-        project_id: Optional[str] = None,
+        project_id: str,
         key_pattern: Optional[str] = None,
     ):
-        details = {}
-        if project_id:
-            details["project_id"] = project_id
+        """Initialize exception.
+
+        Args:
+            message: Error message describing the violation
+            project_id: Project ID affected (REQUIRED)
+            key_pattern: Optional key pattern that caused the violation
+        """
+        details = {"project_id": project_id}
         if key_pattern:
             details["key_pattern"] = key_pattern
 
@@ -172,10 +185,14 @@ class RedisConfigurationException(RedisException):
             details["config_value"] = str(config_value)
         if original_error:
             details["original_error"] = str(original_error)
+            details["original_error_type"] = type(original_error).__name__
 
         super().__init__(
             message=message, error_code="REDIS_CONFIGURATION_ERROR", details=details
         )
+        # Preserve exception context for debugging (exception chaining)
+        if original_error:
+            self.__cause__ = original_error
 
 
 class RedisPoolExhaustedException(RedisException):

@@ -19,11 +19,113 @@ from ...infrastructure.redis.exceptions import (
     RedisConnectionException,
     RedisOperationTimeoutException,
 )
+from ...domain.cache.repository_interfaces import (
+    RateLimitRepository as RateLimitRepositoryABC,
+)
+from ...domain.cache.entities import RateLimit
+from ...domain.cache.value_objects import RateLimitWindow
 
 logger = logging.getLogger(__name__)
 
+# Lua script constants for NOSCRIPT fallback
+SLIDING_WINDOW_LUA = """
+local key = KEYS[1]
+local window = tonumber(ARGV[1])
+local now = tonumber(ARGV[2])
+local cost = tonumber(ARGV[3])
+local limit = tonumber(ARGV[4])
 
-class RateLimitRepository:
+-- Remove expired entries
+redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
+
+-- Get current count
+local current = redis.call('ZCARD', key)
+
+-- Check if request would exceed limit
+if current + cost > limit then
+    -- Get oldest request time for retry calculation
+    local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+    local reset_time = window
+
+    if oldest[2] then
+        reset_time = math.ceil(oldest[2] + window - now)
+    end
+
+    return {
+        0,  -- allowed = false
+        current,
+        0,  -- remaining
+        reset_time,
+        limit
+    }
+end
+
+-- Add current request with timestamp as score
+for i = 1, cost do
+    redis.call('ZADD', key, now, now .. ':' .. i)
+end
+
+-- Set expiration
+redis.call('EXPIRE', key, window)
+
+return {
+    1,  -- allowed = true
+    current + cost,
+    math.max(0, limit - current - cost),
+    window,
+    limit
+}
+"""
+
+TOKEN_BUCKET_LUA = """
+local key = KEYS[1]
+local capacity = tonumber(ARGV[1])
+local refill_rate = tonumber(ARGV[2])
+local now = tonumber(ARGV[3])
+local requested_tokens = tonumber(ARGV[4])
+
+local bucket = redis.call('HMGET', key, 'tokens', 'last_refill')
+local current_tokens = tonumber(bucket[1]) or capacity
+local last_refill = tonumber(bucket[2]) or now
+
+-- Calculate tokens to add
+local time_passed = now - last_refill
+local tokens_to_add = time_passed * refill_rate
+current_tokens = math.min(capacity, current_tokens + tokens_to_add)
+
+-- Check if enough tokens available
+if current_tokens < requested_tokens then
+    local retry_after = math.ceil((requested_tokens - current_tokens) / refill_rate)
+
+    redis.call('HMSET', key, 'tokens', current_tokens, 'last_refill', now)
+    redis.call('EXPIRE', key, math.ceil(capacity / refill_rate) + 1)
+
+    return {
+        0,  -- allowed = false
+        math.floor(current_tokens),
+        0,  -- remaining tokens
+        retry_after,
+        capacity
+    }
+end
+
+-- Consume tokens
+current_tokens = current_tokens - requested_tokens
+
+redis.call('HMSET', key, 'tokens', current_tokens, 'last_refill', now)
+redis.call('EXPIRE', key, math.ceil(capacity / refill_rate) + 1)
+
+return {
+    1,  -- allowed = true
+    math.floor(current_tokens),
+    math.floor(current_tokens),
+    0,  -- no retry needed
+    capacity
+}
+"""
+
+
+class RedisRateLimitRepository(RateLimitRepositoryABC):
     """
     Redis repository for rate limiting operations.
 
@@ -159,7 +261,7 @@ class RateLimitRepository:
         identifier: str,
         config: RateLimitConfig,
         cost: int = 1,
-        project_id: Optional[UUID] = None,
+        project_id: UUID = None,
     ) -> RateLimitResult:
         """
         Check rate limit using sliding window algorithm.
@@ -173,6 +275,12 @@ class RateLimitRepository:
         Returns:
             Rate limit check result
         """
+        # Validate input parameters
+        if not identifier or not identifier.strip():
+            raise ValueError("identifier cannot be empty or whitespace")
+        if cost <= 0:
+            raise ValueError("cost must be positive")
+
         try:
             key = f"rate_limit:sliding:{identifier}:{config.window_seconds}"
             now = int(time.time())
@@ -180,15 +288,30 @@ class RateLimitRepository:
             async with self._redis_factory.get_connection(
                 str(project_id) if project_id else None
             ) as redis_client:
-                result = await redis_client.evalsha(
-                    self._lua_scripts["sliding_window"],
-                    1,  # number of keys
-                    key,
-                    config.window_seconds,
-                    now,
-                    cost,
-                    config.requests_per_window,
-                )
+                try:
+                    result = await redis_client.evalsha(
+                        self._lua_scripts["sliding_window"],
+                        1,  # number of keys
+                        key,
+                        config.window_seconds,
+                        now,
+                        cost,
+                        config.requests_per_window,
+                    )
+                except Exception as e:
+                    # Handle NOSCRIPT error by falling back to eval
+                    if "NOSCRIPT" in str(e):
+                        result = await redis_client.eval(
+                            SLIDING_WINDOW_LUA,
+                            1,  # number of keys
+                            key,
+                            config.window_seconds,
+                            now,
+                            cost,
+                            config.requests_per_window,
+                        )
+                    else:
+                        raise
 
             allowed, current_count, remaining, reset_seconds, limit = result
 
@@ -244,7 +367,7 @@ class RateLimitRepository:
         capacity: int,
         refill_rate: float,
         cost: int = 1,
-        project_id: Optional[UUID] = None,
+        project_id: UUID = None,
     ) -> RateLimitResult:
         """
         Check rate limit using token bucket algorithm.
@@ -259,6 +382,14 @@ class RateLimitRepository:
         Returns:
             Rate limit check result
         """
+        # Validate input parameters
+        if not identifier or not identifier.strip():
+            raise ValueError("identifier cannot be empty or whitespace")
+        if capacity < 1:
+            raise ValueError("capacity must be >= 1")
+        if refill_rate <= 0:
+            raise ValueError("refill_rate must be positive")
+
         try:
             key = f"rate_limit:token_bucket:{identifier}"
             now = int(time.time())
@@ -266,15 +397,30 @@ class RateLimitRepository:
             async with self._redis_factory.get_connection(
                 str(project_id) if project_id else None
             ) as redis_client:
-                result = await redis_client.evalsha(
-                    self._lua_scripts["token_bucket"],
-                    1,  # number of keys
-                    key,
-                    capacity,
-                    refill_rate,
-                    now,
-                    cost,
-                )
+                try:
+                    result = await redis_client.evalsha(
+                        self._lua_scripts["token_bucket"],
+                        1,  # number of keys
+                        key,
+                        capacity,
+                        refill_rate,
+                        now,
+                        cost,
+                    )
+                except Exception as e:
+                    # Handle NOSCRIPT error by falling back to eval
+                    if "NOSCRIPT" in str(e):
+                        result = await redis_client.eval(
+                            TOKEN_BUCKET_LUA,
+                            1,  # number of keys
+                            key,
+                            capacity,
+                            refill_rate,
+                            now,
+                            cost,
+                        )
+                    else:
+                        raise
 
             allowed, current_tokens, remaining, retry_after, max_capacity = result
 
@@ -306,7 +452,7 @@ class RateLimitRepository:
             )
 
     async def get_current_usage(
-        self, identifier: str, window_seconds: int, project_id: Optional[UUID] = None
+        self, identifier: str, window_seconds: int, project_id: UUID = None
     ) -> Dict[str, Any]:
         """
         Get current usage statistics for identifier.
@@ -361,7 +507,7 @@ class RateLimitRepository:
             }
 
     async def reset_rate_limit(
-        self, identifier: str, window_seconds: int, project_id: Optional[UUID] = None
+        self, identifier: str, window_seconds: int, project_id: UUID = None
     ) -> bool:
         """
         Reset rate limit for identifier.
@@ -402,21 +548,42 @@ class RateLimitRepository:
         try:
             cutoff_time = int(time.time()) - (max_age_hours * 3600)
             cleaned_count = 0
+            batch_size = 100
 
             async with self._redis_factory.get_connection() as redis_client:
-                # Get all rate limit keys
-                keys = await redis_client.keys("rate_limit:*")
+                # Use SCAN instead of KEYS to avoid blocking
+                cursor = "0"
+                while cursor != "0":
+                    cursor, keys = await redis_client.scan(
+                        cursor=cursor, match="rate_limit:*", count=batch_size
+                    )
 
-                for key in keys:
-                    # Skip non-sliding window keys
-                    if ":sliding:" not in key:
-                        continue
+                    # Process keys in batch using pipeline
+                    if keys:
+                        async with redis_client.pipeline() as pipe:
+                            for key in keys:
+                                # Skip non-sliding window keys
+                                if ":sliding:" not in key:
+                                    continue
 
-                    # Check oldest entry in window
-                    oldest = await redis_client.zrange(key, 0, 0, withscores=True)
-                    if oldest and oldest[0] and int(oldest[0][1]) < cutoff_time:
-                        await redis_client.delete(key)
-                        cleaned_count += 1
+                                # Check oldest entry in window
+                                pipe.zrange(key, 0, 0, withscores=True)
+
+                            oldest_results = await pipe.execute()
+
+                        # Delete expired keys
+                        delete_pipeline = redis_client.pipeline()
+                        for i, key in enumerate(keys):
+                            if ":sliding:" not in key:
+                                continue
+
+                            oldest = oldest_results[i]
+                            if oldest and oldest[0] and int(oldest[0][1]) < cutoff_time:
+                                delete_pipeline.delete(key)
+                                cleaned_count += 1
+
+                        if delete_pipeline:
+                            await delete_pipeline.execute()
 
             logger.debug(f"Cleaned up {cleaned_count} expired rate limit entries")
             return cleaned_count
@@ -425,19 +592,22 @@ class RateLimitRepository:
             logger.error(f"Failed to cleanup expired rate limit entries: {e}")
             return 0
 
-    async def get_rate_limit_metrics(self) -> Dict[str, Any]:
+    async def get_rate_limit_metrics(self, project_id: UUID) -> Dict[str, Any]:
         """
-        Get comprehensive rate limiting metrics.
+        Get comprehensive rate limiting metrics for project.
 
         Returns:
-            Rate limiting metrics
+            Rate limiting metrics for project
         """
         try:
-            async with self._redis_factory.get_connection() as redis_client:
+            async with self._redis_factory.get_connection(
+                str(project_id)
+            ) as redis_client:
                 # Get all rate limit keys
                 keys = await redis_client.keys("rate_limit:*")
 
                 metrics = {
+                    "project_id": str(project_id),
                     "total_active_limits": len(keys),
                     "limits_by_algorithm": {"sliding_window": 0, "token_bucket": 0},
                     "limits_by_window": {},
@@ -472,8 +642,194 @@ class RateLimitRepository:
 
         except Exception as e:
             logger.error(f"Failed to get rate limit metrics: {e}")
-            return {"error": str(e), "timestamp": datetime.utcnow().isoformat()}
+            return {
+                "error": str(e),
+                "project_id": str(project_id),
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+
+    # Abstract methods from RateLimitRepository domain interface
+    async def save(self, rate_limit: RateLimit, project_id: UUID) -> None:
+        """Save rate limit state within project scope."""
+        # For domain entities - not used in current implementation
+        # Implementation would depend on domain entity structure
+        raise NotImplementedError(
+            "save method not implemented for RedisRateLimitRepository"
+        )
+
+    async def find_by_identifier(
+        self,
+        identifier: str,
+        limit_type: str,
+        window: RateLimitWindow,
+        project_id: UUID,
+    ) -> Optional[RateLimit]:
+        """Find rate limit by identifier within project scope."""
+        # For domain entities - not used in current implementation
+        # Implementation would depend on domain entity structure
+        raise NotImplementedError(
+            "find_by_identifier method not implemented for RedisRateLimitRepository"
+        )
+
+    async def check_and_increment(
+        self,
+        identifier: str,
+        limit_type: str,
+        window: RateLimitWindow,
+        limit: int,
+        project_id: UUID,
+    ) -> bool:
+        """Check if request is allowed and increment count."""
+        try:
+            key = f"rate_limit:{limit_type}:{identifier}:{window.value}"
+            now = int(time.time())
+
+            async with self._redis_factory.get_connection(
+                str(project_id)
+            ) as redis_client:
+                try:
+                    result = await redis_client.evalsha(
+                        self._lua_scripts["sliding_window"],
+                        1,  # number of keys
+                        key,
+                        window.value,
+                        now,
+                        1,  # cost = 1
+                        limit,
+                    )
+                except Exception as e:
+                    # Handle NOSCRIPT error by falling back to eval
+                    if "NOSCRIPT" in str(e):
+                        result = await redis_client.eval(
+                            SLIDING_WINDOW_LUA,
+                            1,  # number of keys
+                            key,
+                            window.value,
+                            now,
+                            1,  # cost = 1
+                            limit,
+                        )
+                    else:
+                        raise
+
+                allowed = result[0]
+                return bool(allowed)
+
+        except Exception as e:
+            logger.error(
+                f"Failed to check and increment rate limit for {identifier}: {e}"
+            )
+            # Fail open - allow request on errors
+            return True
+
+    async def get_current_count(
+        self,
+        identifier: str,
+        limit_type: str,
+        window: RateLimitWindow,
+        project_id: UUID,
+    ) -> int:
+        """Get current request count within project scope."""
+        try:
+            key = f"rate_limit:{limit_type}:{identifier}:{window.value}"
+            now = int(time.time())
+            window_start = now - window.value
+
+            async with self._redis_factory.get_connection(
+                str(project_id)
+            ) as redis_client:
+                count = await redis_client.zcount(key, window_start, now)
+                return count
+
+        except Exception as e:
+            logger.error(f"Failed to get current count for {identifier}: {e}")
+            return 0
+
+    async def get_remaining_requests(
+        self,
+        identifier: str,
+        limit_type: str,
+        window: RateLimitWindow,
+        limit: int,
+        project_id: UUID,
+    ) -> int:
+        """Get remaining requests in window within project scope."""
+        try:
+            current_count = await self.get_current_count(
+                identifier, limit_type, window, project_id
+            )
+            remaining = max(0, limit - current_count)
+            return remaining
+
+        except Exception as e:
+            logger.error(f"Failed to get remaining requests for {identifier}: {e}")
+            return limit  # Fail open - return full limit
+
+    async def get_reset_time(
+        self,
+        identifier: str,
+        limit_type: str,
+        window: RateLimitWindow,
+        project_id: UUID,
+    ) -> Optional[datetime]:
+        """Get window reset time within project scope."""
+        try:
+            key = f"rate_limit:{limit_type}:{identifier}:{window.value}"
+
+            async with self._redis_factory.get_connection(
+                str(project_id)
+            ) as redis_client:
+                oldest = await redis_client.zrange(key, 0, 0, withscores=True)
+                if oldest and oldest[0]:
+                    oldest_time = int(oldest[0][1])
+                    reset_time = datetime.fromtimestamp(oldest_time + window.value)
+                    return reset_time
+
+                return None
+
+        except Exception as e:
+            logger.error(f"Failed to get reset time for {identifier}: {e}")
+            return None
+
+    async def reset_window(
+        self,
+        identifier: str,
+        limit_type: str,
+        window: RateLimitWindow,
+        project_id: UUID,
+    ) -> bool:
+        """Reset rate limit window within project scope."""
+        try:
+            key = f"rate_limit:{limit_type}:{identifier}:{window.value}"
+
+            async with self._redis_factory.get_connection(
+                str(project_id)
+            ) as redis_client:
+                await redis_client.delete(key)
+
+            logger.debug(
+                f"Reset rate limit window for {limit_type}:{identifier} in project {project_id}"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to reset rate limit window for {identifier}: {e}")
+            return False
+
+    async def delete(
+        self,
+        identifier: str,
+        limit_type: str,
+        window: RateLimitWindow,
+        project_id: UUID,
+    ) -> bool:
+        """Delete rate limit state within project scope."""
+        return await self.reset_window(identifier, limit_type, window, project_id)
+
+    async def cleanup_expired(self, project_id: UUID) -> int:
+        """Clean up expired rate limit entries for project."""
+        return await self.cleanup_expired_entries()
 
 
 # Global rate limit repository instance
-rate_limit_repository = RateLimitRepository()
+rate_limit_repository = RedisRateLimitRepository()

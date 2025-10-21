@@ -15,6 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 from .rate_limiter import rate_limiter, RateLimitConfig, RateLimitResult
 
@@ -78,16 +79,28 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
 
             try:
                 # Extract identifiers for rate limiting
+                project_id = self._extract_project_id(request)
                 user_id = await self._extract_user_id(request)
                 client_ip = self._get_client_ip(request)
                 endpoint = self._normalize_endpoint(request.url.path)
+
+                span.set_attribute(
+                    "project_id", str(project_id) if project_id else "none"
+                )
+
+                # Skip rate limiting if no project_id (public endpoints)
+                if not project_id:
+                    logger.debug(
+                        f"Skipping rate limiting for {request.url.path}: no project_id"
+                    )
+                    return await call_next(request)
 
                 # Determine request cost based on method and endpoint
                 cost = self._calculate_request_cost(request)
 
                 # Apply rate limiting checks
                 rate_limit_result = await self._apply_rate_limits(
-                    request, user_id, client_ip, endpoint, cost, span
+                    request, project_id, user_id, client_ip, endpoint, cost, span
                 )
 
                 if not rate_limit_result.allowed:
@@ -102,7 +115,7 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
 
             except Exception as e:
                 logger.error(f"Rate limiting middleware error: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.set_status(Status(StatusCode.ERROR, str(e)))
 
                 # Fail open - allow request on middleware errors
                 return await call_next(request)
@@ -130,6 +143,40 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             logger.warning(f"Failed to extract user ID from request: {e}")
             return None
+
+    def _extract_project_id(self, request: Request) -> Optional[UUID]:
+        """
+        Extract project_id from request headers or path.
+
+        Checks in order:
+        1. X-Project-ID header
+        2. Path parameter (e.g., /api/v1/projects/{project_id}/...)
+
+        Returns:
+            UUID project_id or None if not found
+        """
+        # Try header first
+        project_id_header = request.headers.get("X-Project-ID")
+        if project_id_header:
+            try:
+                return UUID(project_id_header)
+            except ValueError:
+                logger.warning(f"Invalid project_id in header: {project_id_header}")
+
+        # Try to extract from path
+        path_parts = request.url.path.split("/")
+        if (
+            len(path_parts) >= 5
+            and path_parts[1] == "api"
+            and path_parts[3] == "projects"
+        ):
+            # Pattern: /api/v1/projects/{project_id}/...
+            try:
+                return UUID(path_parts[4])
+            except (ValueError, IndexError):
+                pass
+
+        return None
 
     def _get_client_ip(self, request: Request) -> str:
         """Get client IP address from request."""
@@ -182,16 +229,19 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
     async def _apply_rate_limits(
         self,
         request: Request,
+        project_id: UUID,
         user_id: Optional[str],
         client_ip: str,
         endpoint: str,
         cost: int,
         span,
     ) -> RateLimitResult:
-        """Apply multiple rate limiting checks."""
+        """Apply multiple rate limiting checks with project isolation."""
 
         # 1. IP-based rate limiting (always applied)
-        ip_result = await rate_limiter.check_ip_rate_limit(client_ip, cost=cost)
+        ip_result = await rate_limiter.check_ip_rate_limit(
+            project_id=project_id, ip_address=client_ip, cost=cost
+        )
         span.set_attribute("rate_limit.ip.allowed", ip_result.allowed)
         span.set_attribute("rate_limit.ip.remaining", ip_result.remaining_requests)
 
@@ -203,7 +253,7 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
         if user_id:
             try:
                 user_result = await rate_limiter.check_user_rate_limit(
-                    user_id, cost=cost
+                    project_id=project_id, user_id=user_id, cost=cost
                 )
                 span.set_attribute("rate_limit.user.allowed", user_result.allowed)
                 span.set_attribute(
@@ -220,7 +270,7 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
         # 3. Endpoint-based rate limiting
         try:
             endpoint_result = await rate_limiter.check_endpoint_rate_limit(
-                endpoint, user_id, cost=cost
+                project_id=project_id, endpoint=endpoint, user_id=user_id, cost=cost
             )
             span.set_attribute("rate_limit.endpoint.allowed", endpoint_result.allowed)
             span.set_attribute(

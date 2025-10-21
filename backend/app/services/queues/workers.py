@@ -15,9 +15,14 @@ from uuid import UUID, uuid4
 
 from opentelemetry import trace
 
-from .queue_manager import queue_manager, TaskData, TaskType, TaskStatus
-from .retry import ExponentialBackoffRetry
-from .dead_letter import dead_letter_queue
+from app.services.queues.queue_manager import (
+    queue_manager,
+    TaskData,
+    TaskType,
+    TaskStatus,
+)
+from app.services.queues.retry import ExponentialBackoffRetry
+from app.services.queues.dead_letter import dead_letter_queue
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -142,10 +147,13 @@ class QueueWorker:
         """Dequeue next available task."""
         for task_type in self.task_types:
             try:
+                # CRITICAL FIX: Use poll_interval as timeout to respect blocking behavior
                 task_data = await queue_manager.dequeue_task(
                     task_type=task_type,
                     worker_id=self.worker_id,
-                    timeout_seconds=1,  # Non-blocking
+                    timeout_seconds=max(
+                        1, int(self.poll_interval)
+                    ),  # Ensure minimum 1s timeout
                 )
                 if task_data:
                     return task_data
@@ -460,7 +468,7 @@ class WorkerPool:
 
         # TODO: Implement worker scaling logic
         # This would involve stopping excess workers or starting new ones
-        self.workers_per_type = new_workers_per_type
+        raise NotImplementedError("Worker scaling not implemented")
 
 
 # Default task handlers (to be implemented by application)

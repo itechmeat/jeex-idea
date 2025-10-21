@@ -108,8 +108,6 @@ class ProjectCache:
         """Get current status of cache entry."""
         if self.is_expired():
             return CacheEntryStatus.EXPIRED
-        elif datetime.utcnow() > self.expires_at:
-            return CacheEntryStatus.INVALIDATED
         else:
             return CacheEntryStatus.ACTIVE
 
@@ -281,19 +279,20 @@ class QueuedTask:
     Queued task entity.
 
     Represents a single task in the queue with metadata.
+    CRITICAL: project_id is REQUIRED for proper project isolation.
     """
 
     task_id: UUID
     task_type: str
     task_data: Dict[str, Any]
     priority: QueuePriority
+    project_id: UUID  # REQUIRED - never Optional, never None
     status: str = "queued"
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
     attempts: int = 0
     max_attempts: int = 3
     error_message: Optional[str] = None
-    project_id: Optional[UUID] = None
 
     def __post_init__(self) -> None:
         """Validate task data."""
@@ -305,11 +304,22 @@ class QueuedTask:
         cls,
         task_type: str,
         task_data: Dict[str, Any],
+        project_id: UUID,  # REQUIRED parameter
         priority: QueuePriority = QueuePriority.NORMAL,
-        project_id: Optional[UUID] = None,
         max_attempts: int = 3,
     ) -> "QueuedTask":
-        """Create new queued task."""
+        """Create new queued task.
+
+        Args:
+            task_type: Type of task to create
+            task_data: Task data payload
+            project_id: Project ID for isolation (REQUIRED)
+            priority: Task priority (default: NORMAL)
+            max_attempts: Maximum retry attempts (default: 3)
+
+        Returns:
+            New QueuedTask instance
+        """
         return cls(
             task_id=uuid4(),
             task_type=task_type,
@@ -447,7 +457,8 @@ class RateLimit:
     def __post_init__(self) -> None:
         """Initialize rate limit."""
         if not self.reset_time:
-            self.reset_time = self.window_start + timedelta(seconds=self.window.value)
+            window_seconds = int(self.window.value.rstrip("s"))
+            self.reset_time = self.window_start + timedelta(seconds=window_seconds)
 
     @classmethod
     def create(
@@ -466,7 +477,8 @@ class RateLimit:
         """Reset time window and count."""
         self.current_count = 0
         self.window_start = datetime.utcnow()
-        self.reset_time = self.window_start + timedelta(seconds=self.window.value)
+        window_seconds = int(self.window.value.rstrip("s"))
+        self.reset_time = self.window_start + timedelta(seconds=window_seconds)
 
     def can_request(self) -> bool:
         """Check if request is allowed."""

@@ -15,7 +15,36 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from .queue_manager import TaskData, TaskType
+from app.services.queues.queue_manager import TaskData, TaskType, TaskPriority
+
+
+def promote_task_priority(current_priority: TaskPriority) -> TaskPriority:
+    """
+    Promote task priority to the next level for retry.
+
+    Args:
+        current_priority: Current task priority
+
+    Returns:
+        Next priority level (capped at URGENT)
+
+    Priority mapping:
+    - LOW (1) → NORMAL (5)
+    - NORMAL (5) → HIGH (10)
+    - HIGH (10) → CRITICAL (20)
+    - CRITICAL (20) → URGENT (50)
+    - URGENT (50) → URGENT (50)  # cap at highest
+    """
+    priority_mapping = {
+        TaskPriority.LOW: TaskPriority.NORMAL,
+        TaskPriority.NORMAL: TaskPriority.HIGH,
+        TaskPriority.HIGH: TaskPriority.CRITICAL,
+        TaskPriority.CRITICAL: TaskPriority.URGENT,
+        TaskPriority.URGENT: TaskPriority.URGENT,  # Cap at highest
+    }
+
+    # Return mapped priority or URGENT as fallback for unknown values
+    return priority_mapping.get(current_priority, TaskPriority.URGENT)
 
 
 class RetryPolicy(BaseModel):
@@ -170,12 +199,16 @@ class ExponentialBackoffRetry(RetryStrategy):
             }
         )
 
-        # Optionally increase priority for retries
-        new_priority = min(task_data.priority.value + 1, 50)  # Cap at urgent
+        # Promote priority for retries using proper enum mapping
+        new_priority = promote_task_priority(task_data.priority)
 
         # Create updated task data
-        updated_task = task_data.copy(
-            scheduled_at=scheduled_at, priority=new_priority, metadata=new_metadata
+        updated_task = task_data.model_copy(
+            update={
+                "scheduled_at": scheduled_at,
+                "priority": new_priority,
+                "metadata": new_metadata,
+            }
         )
 
         return updated_task
@@ -277,7 +310,9 @@ class LinearBackoffRetry(RetryStrategy):
             }
         )
 
-        return task_data.copy(scheduled_at=scheduled_at, metadata=new_metadata)
+        return task_data.model_copy(
+            update={"scheduled_at": scheduled_at, "metadata": new_metadata}
+        )
 
 
 class FixedDelayRetry(RetryStrategy):
@@ -331,7 +366,9 @@ class FixedDelayRetry(RetryStrategy):
             }
         )
 
-        return task_data.copy(scheduled_at=scheduled_at, metadata=new_metadata)
+        return task_data.model_copy(
+            update={"scheduled_at": scheduled_at, "metadata": new_metadata}
+        )
 
 
 class SmartRetryStrategy(RetryStrategy):
@@ -387,7 +424,7 @@ class SmartRetryStrategy(RetryStrategy):
             }
         )
 
-        return updated_task.copy(metadata=new_metadata)
+        return updated_task.model_copy(update={"metadata": new_metadata})
 
     async def _smart_retry_decision(
         self, task_data: TaskData, error: Exception, attempt: int

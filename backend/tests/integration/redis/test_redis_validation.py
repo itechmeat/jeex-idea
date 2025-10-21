@@ -25,6 +25,9 @@ os.environ["DATABASE_URL"] = (
 os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only-change-in-production"
 os.environ["REDIS_PASSWORD"] = "jeex_redis_secure_password_change_in_production"
 
+# Add the app directory to Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+
 try:
     from app.infrastructure.redis.redis_service import RedisService
     from app.services.cache.cache_manager import cache_manager

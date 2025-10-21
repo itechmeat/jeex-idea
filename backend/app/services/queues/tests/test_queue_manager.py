@@ -5,17 +5,24 @@ Unit tests for queue management functionality.
 """
 
 import pytest
+import pytest_asyncio
 import asyncio
-from uuid import uuid4
+from uuid import UUID, uuid4
 from datetime import datetime, timedelta
 
-from ...queue_manager import QueueManager, TaskData, TaskType, TaskPriority, TaskStatus
+from app.services.queues.queue_manager import (
+    QueueManager,
+    TaskData,
+    TaskType,
+    TaskPriority,
+    TaskStatus,
+)
 
 
 class TestQueueManager:
     """Test cases for QueueManager class."""
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def queue_manager(self):
         """Create queue manager instance for testing."""
         manager = QueueManager()
@@ -43,7 +50,7 @@ class TestQueueManager:
         )
 
         assert task_id is not None
-        assert isinstance(task_id, uuid4)
+        assert isinstance(task_id, UUID)
 
     @pytest.mark.asyncio
     async def test_enqueue_with_priority(self, queue_manager):
@@ -68,7 +75,7 @@ class TestQueueManager:
             task_ids.append(task_id)
 
         assert len(task_ids) == len(priorities)
-        assert all(isinstance(tid, uuid4) for tid in task_ids)
+        assert all(isinstance(tid, UUID) for tid in task_ids)
 
     @pytest.mark.asyncio
     async def test_dequeue_task(self, queue_manager):
@@ -288,12 +295,12 @@ class TestQueueManager:
 
         # Get stats for each queue
         for task_type in task_types:
-            stats = await queue_manager.get_queue_stats(task_type)
+            stats = await queue_manager.get_queue_stats(task_type, project_id)
             assert stats is not None
             assert "task_type" in stats
             assert stats["task_type"] == task_type.value
-            assert "total_queued" in stats
-            assert stats["total_queued"] >= 1
+            assert "total_tasks" in stats
+            assert stats["total_tasks"] >= 1
 
     @pytest.mark.asyncio
     async def test_get_all_queue_stats(self, queue_manager):
@@ -307,7 +314,7 @@ class TestQueueManager:
             )
 
         # Get all stats
-        all_stats = await queue_manager.get_all_queue_stats()
+        all_stats = await queue_manager.get_all_queue_stats(project_id)
         assert all_stats is not None
         assert "queues" in all_stats
         assert "total_tasks" in all_stats
@@ -333,7 +340,7 @@ class TestQueueManager:
         task_data = await queue_manager.get_task_data(task_id)
         assert task_data is not None
         assert task_data.scheduled_at is not None
-        assert task_data.scheduled_time >= scheduled_time - timedelta(seconds=1)
+        assert task_data.scheduled_at >= scheduled_time - timedelta(seconds=1)
 
     @pytest.mark.asyncio
     async def test_project_isolation(self, queue_manager):

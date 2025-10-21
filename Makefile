@@ -425,8 +425,13 @@ redis-cli: ## Execute Redis CLI command (usage: make redis-cli CMD="INFO")
 		echo "Usage: make redis-cli CMD=\"INFO\""; \
 		exit 1; \
 	fi
+	@if [ -z "$(REDIS_PASSWORD)" ]; then \
+		echo "$(RED)Error: REDIS_PASSWORD environment variable is required$(RESET)"; \
+		echo "Please set REDIS_PASSWORD in your environment"; \
+		exit 1; \
+	fi
 	@echo "$(GREEN)Executing Redis command: $(CMD)$(RESET)"
-	@docker-compose exec redis redis-cli -a $${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production} $(CMD)
+	@docker-compose exec redis redis-cli -a $(REDIS_PASSWORD) $(CMD)
 
 test: ## Run all tests
 	@echo "$(GREEN)Running comprehensive test suite...$(RESET)"

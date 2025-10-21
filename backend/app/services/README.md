@@ -302,7 +302,8 @@ QUEUES = {
 ## Deployment Notes
 
 ### Redis Requirements
-- Redis 6.4.0+ for Lua script support
+- Redis 2.6.0+ for EVAL/EVALSHA Lua script support
+- Redis 8.x recommended for production (GA May 2, 2025)
 - Memory: 512MB minimum recommended
 - Persistence: RDB + AOF enabled
 - Connection pooling: Minimum 10 connections

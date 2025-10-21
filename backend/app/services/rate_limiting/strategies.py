@@ -9,10 +9,11 @@ import time
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 from uuid import UUID
+import uuid as uuid_lib
 
 from pydantic import BaseModel, Field
 
-from ...infrastructure.redis.connection_factory import redis_connection_factory
+from app.infrastructure.redis.connection_factory import redis_connection_factory
 
 
 class RateLimitStrategy(ABC):
@@ -20,12 +21,13 @@ class RateLimitStrategy(ABC):
 
     @abstractmethod
     async def check_limit(
-        self, identifier: str, limit: int, window: int, cost: int = 1
+        self, project_id: UUID, identifier: str, limit: int, window: int, cost: int = 1
     ) -> Dict[str, Any]:
         """
         Check rate limit using specific strategy.
 
         Args:
+            project_id: Project UUID for tenant isolation
             identifier: Unique identifier for rate limit
             limit: Maximum allowed requests
             window: Time window in seconds
@@ -49,7 +51,7 @@ class SlidingWindowStrategy(RateLimitStrategy):
         self.redis_factory = redis_factory or redis_connection_factory
 
     async def check_limit(
-        self, identifier: str, limit: int, window: int, cost: int = 1
+        self, project_id: UUID, identifier: str, limit: int, window: int, cost: int = 1
     ) -> Dict[str, Any]:
         """
         Check rate limit using sliding window algorithm.
@@ -57,10 +59,10 @@ class SlidingWindowStrategy(RateLimitStrategy):
         Maintains a sorted set of request timestamps, automatically
         removing entries outside the current window.
         """
-        key = f"sliding_window:{identifier}:{window}"
+        key = f"proj:{project_id}:sliding_window:{identifier}:{window}"
         now = int(time.time())
 
-        async with self.redis_factory.get_connection() as redis_client:
+        async with self.redis_factory.get_connection(project_id) as redis_client:
             # Use pipeline for atomic operations
             pipe = redis_client.pipeline()
 
@@ -70,22 +72,12 @@ class SlidingWindowStrategy(RateLimitStrategy):
             # Get current count
             pipe.zcard(key)
 
-            # Check if request would exceed limit
-            # Add current request if within limit
-            pipe.zadd(key, {str(now): now})
-
-            # Set expiration
-            pipe.expire(key, window)
-
             results = await pipe.execute()
+            current_count = results[0]  # Fixed: results[0] is zcard result
 
-            current_count = results[1]
-
-            if current_count > limit:
-                # Remove the request we just added (it exceeded limit)
-                await redis_client.zrem(key, str(now))
-
-                # Get oldest request for retry calculation
+            # Check if request would exceed limit considering cost
+            if current_count + cost > limit:
+                # Get oldest request for retry calculation (don't remove anything)
                 oldest = await redis_client.zrange(key, 0, 0, withscores=True)
                 reset_time = window
 
@@ -96,15 +88,25 @@ class SlidingWindowStrategy(RateLimitStrategy):
                 return {
                     "allowed": False,
                     "current_count": current_count,
-                    "remaining_requests": 0,
+                    "remaining_requests": max(0, limit - current_count),
                     "reset_seconds": reset_time,
                     "limit": limit,
                 }
 
+            # Add current request with cost distinct members using unique identifiers
+            pipe = redis_client.pipeline()
+            for i in range(cost):
+                unique_id = f"{now}:{uuid_lib.uuid4().hex[:8]}"
+                pipe.zadd(key, {unique_id: now})
+
+            # Set expiration
+            pipe.expire(key, window)
+            await pipe.execute()
+
             return {
                 "allowed": True,
-                "current_count": current_count,
-                "remaining_requests": max(0, limit - current_count),
+                "current_count": current_count + cost,
+                "remaining_requests": max(0, limit - current_count - cost),
                 "reset_seconds": window,
                 "limit": limit,
             }
@@ -123,6 +125,7 @@ class TokenBucketStrategy(RateLimitStrategy):
 
     async def check_limit(
         self,
+        project_id: UUID,
         identifier: str,
         capacity: int,
         refill_rate: int,  # tokens per second
@@ -134,10 +137,10 @@ class TokenBucketStrategy(RateLimitStrategy):
         Tokens are refilled based on elapsed time since last request.
         Allows for burst handling within capacity limits.
         """
-        key = f"token_bucket:{identifier}"
+        key = f"proj:{project_id}:token_bucket:{identifier}"
         now = int(time.time())
 
-        async with self.redis_factory.get_connection() as redis_client:
+        async with self.redis_factory.get_connection(project_id) as redis_client:
             # Use atomic script for token bucket operations
             script = """
             local key = KEYS[1]
@@ -220,7 +223,7 @@ class FixedWindowStrategy(RateLimitStrategy):
         self.redis_factory = redis_factory or redis_connection_factory
 
     async def check_limit(
-        self, identifier: str, limit: int, window: int, cost: int = 1
+        self, project_id: UUID, identifier: str, limit: int, window: int, cost: int = 1
     ) -> Dict[str, Any]:
         """
         Check rate limit using fixed window algorithm.
@@ -231,9 +234,9 @@ class FixedWindowStrategy(RateLimitStrategy):
         # Calculate current window key
         current_time = int(time.time())
         window_start = (current_time // window) * window
-        key = f"fixed_window:{identifier}:{window_start}"
+        key = f"proj:{project_id}:fixed_window:{identifier}:{window_start}"
 
-        async with self.redis_factory.get_connection() as redis_client:
+        async with self.redis_factory.get_connection(project_id) as redis_client:
             # Use atomic increment with expiration
             pipe = redis_client.pipeline()
             pipe.incrby(key, cost)
@@ -277,7 +280,12 @@ class AdaptiveRateLimitStrategy(RateLimitStrategy):
         self.base_strategy = SlidingWindowStrategy(redis_factory)
 
     async def check_limit(
-        self, identifier: str, base_limit: int, window: int, cost: int = 1
+        self,
+        project_id: UUID,
+        identifier: str,
+        base_limit: int,
+        window: int,
+        cost: int = 1,
     ) -> Dict[str, Any]:
         """
         Check rate limit with adaptive adjustment.
@@ -289,14 +297,14 @@ class AdaptiveRateLimitStrategy(RateLimitStrategy):
         - Geographic location (if available)
         """
         # Calculate adaptive limit multiplier
-        multiplier = await self._calculate_adaptive_multiplier(identifier)
+        multiplier = await self._calculate_adaptive_multiplier(project_id, identifier)
 
         # Apply multiplier to base limit
         adjusted_limit = int(base_limit * multiplier)
 
         # Use base strategy with adjusted limit
         result = await self.base_strategy.check_limit(
-            identifier, adjusted_limit, window, cost
+            project_id, identifier, adjusted_limit, window, cost
         )
 
         # Add adaptive information to result
@@ -306,15 +314,17 @@ class AdaptiveRateLimitStrategy(RateLimitStrategy):
 
         return result
 
-    async def _calculate_adaptive_multiplier(self, identifier: str) -> float:
+    async def _calculate_adaptive_multiplier(
+        self, project_id: UUID, identifier: str
+    ) -> float:
         """Calculate adaptive multiplier for rate limit adjustment."""
         # Default multiplier
         multiplier = 1.0
 
         try:
             # Check system load (would integrate with monitoring system)
-            system_load_key = "system:load:average"
-            async with self.redis_factory.get_connection() as redis_client:
+            system_load_key = f"proj:{project_id}:system:load:average"
+            async with self.redis_factory.get_connection(project_id) as redis_client:
                 system_load = await redis_client.get(system_load_key)
 
                 if system_load and float(system_load) > 0.8:
@@ -322,8 +332,8 @@ class AdaptiveRateLimitStrategy(RateLimitStrategy):
                     multiplier *= 0.7
 
             # Check user's historical behavior
-            user_history_key = f"user_history:{identifier}"
-            async with self.redis_factory.get_connection() as redis_client:
+            user_history_key = f"proj:{project_id}:user_history:{identifier}"
+            async with self.redis_factory.get_connection(project_id) as redis_client:
                 history = await redis_client.hgetall(user_history_key)
 
                 if history:
@@ -355,7 +365,7 @@ class DistributedRateLimitStrategy(RateLimitStrategy):
         self.redis_factory = redis_factory or redis_connection_factory
 
     async def check_limit(
-        self, identifier: str, limit: int, window: int, cost: int = 1
+        self, project_id: UUID, identifier: str, limit: int, window: int, cost: int = 1
     ) -> Dict[str, Any]:
         """
         Check rate limit with distributed consistency.
@@ -412,10 +422,10 @@ class DistributedRateLimitStrategy(RateLimitStrategy):
         }
         """
 
-        key = f"distributed:{identifier}:{window}"
+        key = f"proj:{project_id}:distributed:{identifier}:{window}"
         now = int(time.time())
 
-        async with self.redis_factory.get_connection() as redis_client:
+        async with self.redis_factory.get_connection(project_id) as redis_client:
             result = await redis_client.eval(
                 script,
                 1,  # number of keys

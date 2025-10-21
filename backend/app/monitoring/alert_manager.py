@@ -78,8 +78,12 @@ class AlertRule:
 
 @dataclass
 class Alert:
-    """Alert instance."""
+    """Alert instance.
 
+    CRITICAL: project_id is REQUIRED for proper project isolation.
+    """
+
+    project_id: UUID  # REQUIRED - never Optional, never None
     id: UUID = field(default_factory=uuid4)
     rule_id: str = ""
     category: AlertCategory = AlertCategory.MEMORY
@@ -89,7 +93,6 @@ class Alert:
     message: str = ""
     current_value: float = 0.0
     threshold: float = 0.0
-    project_id: Optional[UUID] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
@@ -296,11 +299,22 @@ class RedisAlertManager:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error("Redis alert evaluation error", error=str(e))
-                await asyncio.sleep(60)
+                logger.exception(
+                    "Redis alert evaluation error", error=str(e), exc_info=True
+                )
+                await asyncio.sleep(5)
+                # Note: Not re-raising here as this is a background loop that should continue
+                # But we log with full exception context
 
     async def _evaluate_alert_rules(self) -> None:
         """Evaluate all enabled alert rules."""
+        # TODO: REDO - Alert manager needs to be project-scoped
+        # Current implementation doesn't provide project_id context
+        # This requires architectural changes to make alert manager per-project
+        raise NotImplementedError(
+            "Alert manager needs project context for proper isolation"
+        )
+
         # Get current metrics
         metrics_summary = await redis_metrics_collector.get_metrics_summary()
         health_status = await redis_health_checker.get_latest_health_status()
@@ -335,13 +349,19 @@ class RedisAlertManager:
                 continue
 
             try:
-                await self._evaluate_rule(rule, evaluation_data)
+                # TODO: Pass project_id here - requires project context
+                await self._evaluate_rule(
+                    rule, evaluation_data, UUID(int=0)
+                )  # Placeholder
             except Exception as e:
                 logger.error(
                     "Failed to evaluate alert rule",
                     rule_id=rule.id,
                     error=str(e),
+                    exc_info=True,
                 )
+                # Re-raise to preserve error context
+                raise
 
     def _should_evaluate_rule(self, rule: AlertRule) -> bool:
         """Check if rule should be evaluated based on cooldown."""
@@ -365,7 +385,9 @@ class RedisAlertManager:
 
         return True
 
-    async def _evaluate_rule(self, rule: AlertRule, data: Dict[str, Any]) -> None:
+    async def _evaluate_rule(
+        self, rule: AlertRule, data: Dict[str, Any], project_id: UUID
+    ) -> None:
         """Evaluate a single alert rule."""
         try:
             # Extract metric value using the metric path
@@ -376,6 +398,7 @@ class RedisAlertManager:
                     "Metric value not found for rule",
                     rule_id=rule.id,
                     metric_path=rule.metric_path,
+                    project_id=project_id,
                 )
                 return
 
@@ -388,16 +411,20 @@ class RedisAlertManager:
             self._last_evaluation[rule.id] = datetime.utcnow()
 
             if triggered:
-                await self._trigger_alert(rule, current_value, data)
+                await self._trigger_alert(rule, current_value, data, project_id)
             else:
-                await self._check_alert_resolution(rule, current_value)
+                await self._check_alert_resolution(rule, current_value, project_id)
 
         except Exception as e:
             logger.error(
                 "Failed to evaluate alert rule",
                 rule_id=rule.id,
+                project_id=project_id,
                 error=str(e),
+                exc_info=True,
             )
+            # Re-raise to preserve error context
+            raise
 
     def _extract_metric_value(
         self, metric_path: str, data: Dict[str, Any]
@@ -449,11 +476,15 @@ class RedisAlertManager:
             return False
 
     async def _trigger_alert(
-        self, rule: AlertRule, current_value: float, data: Dict[str, Any]
+        self,
+        rule: AlertRule,
+        current_value: float,
+        data: Dict[str, Any],
+        project_id: UUID,
     ) -> None:
         """Trigger an alert for a rule."""
         # Check if there's already an active alert for this rule
-        existing_alert = self._find_active_alert(rule.id)
+        existing_alert = self._find_active_alert(rule.id, project_id)
         if existing_alert:
             # Update existing alert
             existing_alert.current_value = current_value
@@ -463,12 +494,14 @@ class RedisAlertManager:
                 "Updated existing alert",
                 alert_id=existing_alert.id,
                 rule_id=rule.id,
+                project_id=project_id,
                 current_value=current_value,
             )
             return
 
         # Create new alert
         alert = Alert(
+            project_id=project_id,
             rule_id=rule.id,
             category=rule.category,
             severity=rule.severity,
@@ -511,10 +544,14 @@ class RedisAlertManager:
             threshold=rule.threshold,
         )
 
-    def _find_active_alert(self, rule_id: str) -> Optional[Alert]:
+    def _find_active_alert(self, rule_id: str, project_id: UUID) -> Optional[Alert]:
         """Find existing active alert for a rule."""
         for alert in self._alerts.values():
-            if alert.rule_id == rule_id and alert.status == AlertStatus.ACTIVE:
+            if (
+                alert.rule_id == rule_id
+                and alert.project_id == project_id
+                and alert.status == AlertStatus.ACTIVE
+            ):
                 return alert
         return None
 
@@ -549,10 +586,10 @@ class RedisAlertManager:
         return message
 
     async def _check_alert_resolution(
-        self, rule: AlertRule, current_value: float
+        self, rule: AlertRule, current_value: float, project_id: UUID
     ) -> None:
         """Check if active alerts should be resolved."""
-        existing_alert = self._find_active_alert(rule.id)
+        existing_alert = self._find_active_alert(rule.id, project_id)
         if not existing_alert:
             return
 
@@ -593,7 +630,10 @@ class RedisAlertManager:
                     alert_id=alert.id,
                     notification_id=notification.id,
                     error=str(e),
+                    exc_info=True,
                 )
+                # Note: Not re-raising here as notification failures shouldn't block alert creation
+                # But we log with full exception context
 
     def _alert_matches_filters(self, alert: Alert, filters: Dict[str, Any]) -> bool:
         """Check if alert matches notification filters."""
@@ -701,7 +741,10 @@ class RedisAlertManager:
                 alert_id=str(alert.id),
                 webhook_url=webhook_url,
                 error=str(e),
+                exc_info=True,
             )
+            # Re-raise to preserve error context
+            raise
 
     async def _cleanup_old_alerts(self) -> None:
         """Clean up old resolved alerts."""

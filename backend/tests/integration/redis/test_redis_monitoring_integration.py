@@ -12,11 +12,12 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 # Add the app directory to Python path
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from app.monitoring.redis_metrics import redis_metrics_collector
+from app.monitoring.redis_metrics import redis_metrics_collector, RedisCommandType
 from app.monitoring.health_checker import redis_health_checker
 from app.monitoring.performance_monitor import redis_performance_monitor
 from app.monitoring.alert_manager import redis_alert_manager
@@ -25,6 +26,25 @@ from app.infrastructure.redis.connection_factory import redis_connection_factory
 from app.core.config import get_settings
 
 settings = get_settings()
+TEST_PROJECT_ID = uuid4()  # Generate test project ID
+
+
+def mask_redis_url(url: str) -> str:
+    """Mask password in Redis URL for security."""
+    if "@" in url:
+        # URL format: redis://[:password@]host[:port][/db]
+        start = url.find("//")
+        if start != -1:
+            start += 2
+            at_pos = url.find("@", start)
+            if at_pos != -1:
+                # Check if there's a password
+                auth_part = url[start:at_pos]
+                if ":" in auth_part:
+                    # Mask the password part
+                    user_part = auth_part.split(":")[0]
+                    return url.replace(auth_part, f"{user_part}:***")
+    return url
 
 
 async def test_redis_connection():
@@ -34,7 +54,9 @@ async def test_redis_connection():
     try:
         await redis_connection_factory.initialize()
 
-        async with redis_connection_factory.get_connection() as redis_client:
+        async with redis_connection_factory.get_connection(
+            TEST_PROJECT_ID
+        ) as redis_client:
             result = await redis_client.ping()
             if result:
                 print("✅ Redis connection successful")
@@ -54,11 +76,11 @@ async def test_metrics_collection():
 
     try:
         # Track some test commands
-        await redis_metrics_collector.track_command_performance(
-            "GET", redis_metrics_collector.RedisCommandType.READ, 5.0, True
+        await redis_performance_monitor.track_command_performance(
+            "GET", RedisCommandType.READ, 5.0, True, project_id=TEST_PROJECT_ID
         )
-        await redis_metrics_collector.track_command_performance(
-            "SET", redis_metrics_collector.RedisCommandType.WRITE, 10.0, True
+        await redis_performance_monitor.track_command_performance(
+            "SET", RedisCommandType.WRITE, 10.0, True, project_id=TEST_PROJECT_ID
         )
 
         # Collect metrics
@@ -69,9 +91,11 @@ async def test_metrics_collection():
         summary = await redis_metrics_collector.get_metrics_summary()
 
         print("✅ Metrics collection successful")
-        print(
-            f"   Memory usage: {summary.get('memory', {}).get('used_memory_mb', 'N/A'):.2f} MB"
-        )
+        memory_usage = summary.get("memory", {}).get("used_memory_mb", "N/A")
+        if memory_usage == "N/A":
+            print(f"   Memory usage: {memory_usage} MB")
+        else:
+            print(f"   Memory usage: {memory_usage:.2f} MB")
         print(
             f"   Active connections: {summary.get('connections', {}).get('active_connections', 'N/A')}"
         )
@@ -115,10 +139,10 @@ async def test_performance_monitoring():
     try:
         # Track some performance data
         await redis_performance_monitor.track_command_performance(
-            "HGET", redis_performance_monitor.RedisCommandType.READ, 3.0, True
+            "HGET", RedisCommandType.READ, 3.0, True, project_id=TEST_PROJECT_ID
         )
         await redis_performance_monitor.track_command_performance(
-            "LPUSH", redis_performance_monitor.RedisCommandType.WRITE, 7.0, True
+            "LPUSH", RedisCommandType.WRITE, 7.0, True, project_id=TEST_PROJECT_ID
         )
 
         # Analyze performance
@@ -225,7 +249,7 @@ async def generate_test_report():
     report = {
         "timestamp": datetime.utcnow().isoformat(),
         "redis_config": {
-            "url": settings.REDIS_URL,
+            "url": mask_redis_url(settings.REDIS_URL),
             "max_connections": settings.REDIS_MAX_CONNECTIONS,
             "timeout": settings.REDIS_CONNECTION_TIMEOUT,
         },
@@ -310,7 +334,7 @@ async def main():
     """Main test function."""
     print("🚀 Redis Monitoring Integration Test")
     print("=" * 50)
-    print(f"Testing Redis at: {settings.REDIS_URL}")
+    print(f"Testing Redis at: {mask_redis_url(settings.REDIS_URL)}")
     print(f"Timestamp: {datetime.utcnow().isoformat()}")
 
     try:
