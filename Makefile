@@ -345,6 +345,10 @@ qdrant-init: ## Initialize Qdrant collection and indexes
 	@curl -s -X PUT "http://localhost:5230/collections/jeex_memory/index" \
 		-H "Content-Type: application/json" \
 		-d '{"field_name": "created_at", "field_schema": "datetime"}' || true
+	@# Create importance index
+	@curl -s -X PUT "http://localhost:5230/collections/jeex_memory/index" \
+		-H "Content-Type: application/json" \
+		-d '{"field_name": "importance", "field_schema": "float"}' || true
 	@echo "$(GREEN)Qdrant collection initialized$(RESET)"
 
 qdrant-health: ## Check Qdrant service and collection health
@@ -394,7 +398,7 @@ test: ## Run all tests
 
 test-backend: ## Run backend tests
 	@echo "$(GREEN)Running backend tests...$(RESET)"
-	@cd backend && python -m pytest tests/ -v
+	@cd backend && python3 -m pytest tests/ -v
 
 test-phase4: ## Run Phase 4 integration and testing suite
 	@echo "$(GREEN)Running Phase 4 Integration and Testing Suite...$(RESET)"
@@ -423,7 +427,7 @@ test-quick: ## Run quick tests (excluding performance tests)
 
 test-unit-vector: ## Run vector database unit tests
 	@echo "$(GREEN)Running vector database unit tests...$(RESET)"
-	@cd backend && python -m pytest tests/unit/services/vector/ -v
+	@cd backend && source venv/bin/activate && python -m pytest tests/unit/services/vector/ -v
 
 test-integration-vector: ## Run vector database integration tests
 	@echo "$(GREEN)Running vector database integration tests...$(RESET)"

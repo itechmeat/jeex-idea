@@ -26,6 +26,7 @@ docker-compose config --quiet
 ### 2. Restart Execution
 
 **Default (rebuild):**
+
 ```bash
 docker-compose down --remove-orphans
 docker-compose up --build -d
@@ -33,6 +34,7 @@ sleep 15
 ```
 
 **Full reset (if volumes need clearing):**
+
 ```bash
 docker-compose down -v --remove-orphans
 docker-compose up --build -d
@@ -67,6 +69,7 @@ docker-compose logs api --tail 100 | grep -iE "error|exception|failed|traceback"
 ```
 
 **Critical errors to watch for:**
+
 - `ImportError`, `ModuleNotFoundError` → Missing imports
 - `TypeError`, `AttributeError` → Code logic errors
 - `ValidationError` → Configuration issues
@@ -76,6 +79,7 @@ docker-compose logs api --tail 100 | grep -iE "error|exception|failed|traceback"
 ### 5. Fix Runtime Errors
 
 If errors detected:
+
 1. Read the file with error
 2. Fix the issue
 3. Restart affected service: `docker-compose restart api`

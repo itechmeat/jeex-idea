@@ -258,6 +258,85 @@ class TestVectorPoint:
         assert "updated_at" in payload
         assert "content_hash" in payload
 
+    def test_vector_point_with_optional_vector(self):
+        """Test VectorPoint can be created with optional vector (for search results)."""
+        point = VectorPoint(
+            vector=None,  # No vector for search results
+            content="test content",
+            project_id=ProjectId("550e8400-e29b-41d4-a716-446655440000"),
+            language=LanguageCode("en"),
+            document_type=DocumentType.KNOWLEDGE,
+        )
+
+        assert point.vector is None
+        assert point.content == "test content"
+
+    def test_from_qdrant_point_with_valid_vector(self):
+        """Test from_qdrant_point with valid vector data."""
+        vector = [0.1] * 1536
+        payload = {
+            "project_id": "550e8400-e29b-41d4-a716-446655440000",
+            "language": "en",
+            "type": "knowledge",
+            "content": "test content",
+            "content_hash": "abc123",
+            "created_at": "2023-01-01T00:00:00",
+            "updated_at": "2023-01-01T00:00:00",
+        }
+
+        point = VectorPoint.from_qdrant_point(
+            "550e8400-e29b-41d4-a716-446655440000", vector, payload
+        )
+
+        assert str(point.id) == "550e8400-e29b-41d4-a716-446655440000"
+        assert point.vector.to_list() == vector
+        assert point.content == "test content"
+
+    def test_from_qdrant_point_with_empty_vector(self):
+        """Test from_qdrant_point raises ValueError with empty vector."""
+        payload = {
+            "project_id": "550e8400-e29b-41d4-a716-446655440000",
+            "language": "en",
+            "type": "knowledge",
+            "content": "test content",
+            "content_hash": "abc123",
+            "created_at": "2023-01-01T00:00:00",
+            "updated_at": "2023-01-01T00:00:00",
+        }
+
+        with pytest.raises(ValueError, match="Vector data is missing or empty"):
+            VectorPoint.from_qdrant_point(
+                "550e8400-e29b-41d4-a716-446655440000", [], payload
+            )
+
+        with pytest.raises(ValueError, match="Vector data is missing or empty"):
+            VectorPoint.from_qdrant_point(
+                "550e8400-e29b-41d4-a716-446655440000", None, payload
+            )
+
+    def test_from_qdrant_search_result(self):
+        """Test from_qdrant_search_result creates VectorPoint without vector."""
+        payload = {
+            "project_id": "550e8400-e29b-41d4-a716-446655440000",
+            "language": "en",
+            "type": "knowledge",
+            "content": "test content",
+            "content_hash": "abc123",
+            "created_at": "2023-01-01T00:00:00",
+            "updated_at": "2023-01-01T00:00:00",
+        }
+
+        point = VectorPoint.from_qdrant_search_result(
+            "550e8400-e29b-41d4-a716-446655440000", payload
+        )
+
+        assert str(point.id) == "550e8400-e29b-41d4-a716-446655440000"
+        assert point.vector is None
+        assert point.content == "test content"
+        assert str(point.project_id) == "550e8400-e29b-41d4-a716-446655440000"
+        assert str(point.language) == "en"
+        assert point.document_type == DocumentType.KNOWLEDGE
+
 
 class TestSearchResult:
     """Test SearchResult domain entity."""

@@ -170,11 +170,18 @@ class VectorRepository(ABC):
         """
         Delete points matching project and language filter.
 
+        CRITICAL: Implementations MUST validate and enforce project_id and language
+        from the provided SearchContext. This is a security-critical operation - all
+        deletions must respect tenant scoping to prevent cross-project data loss.
+
         Args:
-            context: Search context with project_id and language
+            context: Search context with project_id and language (MANDATORY)
 
         Returns:
             Number of points deleted
+
+        Raises:
+            ValueError: If context is missing required fields
         """
         pass
 
@@ -183,11 +190,18 @@ class VectorRepository(ABC):
         """
         Count points matching project and language filter.
 
+        CRITICAL: Implementations MUST validate and enforce project_id and language
+        from the provided SearchContext to ensure count operations respect multi-tenant
+        isolation boundaries.
+
         Args:
-            context: Search context with project_id and language
+            context: Search context with project_id and language (MANDATORY)
 
         Returns:
             Number of matching points
+
+        Raises:
+            ValueError: If context is missing required fields
         """
         pass
 

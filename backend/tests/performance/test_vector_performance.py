@@ -33,7 +33,7 @@ from app.services.vector.domain.entities import (
 )
 from app.services.vector.search_service import DefaultVectorSearchService
 from app.services.vector.repositories.qdrant_repository import QdrantVectorRepository
-from app.services.vector.collection_manager import CollectionManager
+from app.services.vector.collection_manager import VectorCollectionManager
 from qdrant_client import QdrantClient
 
 
@@ -207,8 +207,12 @@ async def performance_setup():
         await asyncio.to_thread(
             client.delete_collection, collection_name=test_collection_name
         )
-    except Exception:
-        pass  # Ignore cleanup errors
+    except Exception as e:
+        # Log cleanup errors for debugging but don't fail the test
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.exception("Failed to cleanup test collection", exc_info=True)
 
 
 class VectorPerformanceBenchmark:
@@ -226,7 +230,7 @@ class VectorPerformanceBenchmark:
         self.config = BenchmarkConfig()
 
     async def benchmark_search_performance(
-        self, dataset_size: int, project_id: str, iterations: int = 10
+        self, dataset_size: int, project_id: Optional[str] = None, iterations: int = 10
     ) -> PerformanceMetrics:
         """
         Benchmark search performance across different dataset sizes.
@@ -236,7 +240,8 @@ class VectorPerformanceBenchmark:
         print(f"🔍 Benchmarking search performance with {dataset_size} vectors...")
 
         # Setup test data
-        project_id = str(uuid4())
+        if project_id is None:
+            project_id = str(uuid4())
         context = SearchContext.create(project_id, "en")
 
         # Generate and insert test data
@@ -431,7 +436,10 @@ class VectorPerformanceBenchmark:
                 query_end = time.time()
                 return (query_end - query_start) * 1000, True
             except Exception as e:
-                print(f"Concurrent search error: {e}")
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.exception("Concurrent search error", exc_info=True)
                 return (0, False)
 
         # Execute queries concurrently
@@ -513,6 +521,9 @@ class VectorPerformanceBenchmark:
                         )
                         points_by_project[project_id].append(point)
 
+        # Calculate total dataset size before upserting
+        total_points = sum(len(points) for points in points_by_project.values())
+
         # Upsert points per project with mandatory project_id validation
         for project_id, test_points in points_by_project.items():
             await self.repository.upsert_points(UUID(project_id), test_points)
@@ -570,7 +581,7 @@ class VectorPerformanceBenchmark:
 
         return PerformanceMetrics(
             operation="filter_search",
-            dataset_size=len(test_points),
+            dataset_size=total_points,
             duration_ms=total_time,
             throughput=len(latencies) / (total_time / 1000) if total_time > 0 else 0,
             latency_p50=statistics.median(latencies) if latencies else 0,
@@ -587,12 +598,36 @@ class VectorPerformanceBenchmark:
         )
 
     def _percentile(self, data: List[float], percentile: float) -> float:
-        """Calculate percentile of data list."""
+        """Calculate percentile of data list using linear interpolation."""
         if not data:
             return 0.0
+
+        n = len(data)
         sorted_data = sorted(data)
-        index = int(len(sorted_data) * percentile / 100)
-        return sorted_data[min(index, len(sorted_data) - 1)]
+
+        # Handle edge cases
+        if percentile <= 0:
+            return sorted_data[0]
+        if percentile >= 100:
+            return sorted_data[-1]
+
+        # Convert percentile to fraction (0-1)
+        q = percentile / 100.0
+
+        # Calculate rank position using linear interpolation formula
+        # p = 1 + (n - 1) * q
+        p = 1 + (n - 1) * q
+
+        # Get integer part and fractional part
+        lower_idx = int(p) - 1  # Convert to 0-based index
+        upper_idx = min(lower_idx + 1, n - 1)
+        fractional = p - int(p)
+
+        # Linear interpolation
+        lower_value = sorted_data[lower_idx]
+        upper_value = sorted_data[upper_idx]
+
+        return lower_value + fractional * (upper_value - lower_value)
 
 
 # pytest benchmark tests

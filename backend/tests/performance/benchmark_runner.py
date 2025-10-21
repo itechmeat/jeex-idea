@@ -102,7 +102,7 @@ class PerformanceBenchmarkRunner:
         suite_results = {
             "suite_name": "vector_database_performance",
             "timestamp": datetime.utcnow().isoformat(),
-            "config": asdict(self.config),
+            "config": vars(self.config),
             "results": {},
             "summary": {},
         }
@@ -214,7 +214,10 @@ class PerformanceBenchmarkRunner:
                     )
                     print(f"🗑️ Deleted test collection: {collection.name}")
         except Exception as e:
-            print(f"⚠️ Warning: Could not cleanup test collections: {e}")
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.exception("Could not cleanup test collections", exc_info=True)
 
     async def _run_search_benchmarks(
         self, benchmark: VectorPerformanceBenchmark

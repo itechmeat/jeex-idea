@@ -78,8 +78,8 @@ All requirements follow the EARS (Easy Approach to Requirements Syntax) standard
 
 **EARS Requirements:**
 
-1. When storing a vector point, the system shall require payload field `project_id` as UUID string
-2. When storing a vector point, the system shall require payload field `language` as ISO 639-1 code
+1. When storing a vector point, the system shall extract `project_id` from the authenticated request context and set it server-side (client-provided values are ignored)
+2. When storing a vector point, the system shall resolve `language` from project metadata in PostgreSQL and set it server-side (client-provided values are ignored)
 3. When storing a vector point, the system shall validate the vector dimension is exactly 1536
 4. If the vector dimension is not 1536, then the system shall reject the upsert operation with error "Invalid vector dimension"
 5. When storing a vector point, the system shall compute content_hash from the text content for deduplication
@@ -308,9 +308,9 @@ When query performance metrics are collected, the system shall establish baselin
 
 ### Test Scenario for REQ-004: Vector Point Storage
 
-**Given:** Embedding service generates a 1536-dimension vector for a document chunk
-**When:** Backend stores the vector with project_id "550e8400-e29b-41d4-a716-446655440000" and language "en"
-**Then:** Vector is stored in Qdrant AND payload contains project_id "550e8400-e29b-41d4-a716-446655440000" AND payload contains language "en" AND content_hash is computed AND vector is retrievable via search
+**Given:** Embedding service generates a 1536-dimension vector for a document chunk AND authenticated request context contains project_id "550e8400-e29b-41d4-a716-446655440000" AND project metadata in PostgreSQL contains language "en"
+**When:** Backend stores the vector (client does not provide project_id or language)
+**Then:** Vector is stored in Qdrant AND payload contains project_id "550e8400-e29b-41d4-a716-446655440000" (extracted from context) AND payload contains language "en" (resolved from PostgreSQL) AND content_hash is computed AND vector is retrievable via search
 
 ### Test Scenario for REQ-004 (Negative): Invalid Vector Dimension
 

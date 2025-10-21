@@ -87,7 +87,31 @@ class VectorIsolationTestRunner:
 
         Args:
             base_url: Base URL for vector service
+
+        Raises:
+            ValueError: If base_url is invalid
         """
+        # Input validation: fail fast on invalid URL
+        if not base_url or not isinstance(base_url, str):
+            raise ValueError(
+                f"base_url must be non-empty string, got: {type(base_url).__name__}"
+            )
+
+        from urllib.parse import urlparse
+
+        try:
+            parsed = urlparse(base_url)
+            if parsed.scheme not in ["http", "https"]:
+                raise ValueError(
+                    f"base_url must have http or https scheme, got: {parsed.scheme}"
+                )
+            if not parsed.netloc:
+                raise ValueError(
+                    f"base_url must have network location (host), got: {base_url}"
+                )
+        except Exception as e:
+            raise ValueError(f"Invalid base_url format: {base_url}") from e
+
         self.base_url = base_url
         self.results = TestResults()
         self.start_time = None
@@ -244,8 +268,9 @@ class VectorIsolationTestRunner:
             }
 
         except Exception as e:
-            logger.warning("Failed to parse pytest report", error=str(e), exc_info=True)
-            return {"total": 0, "passed": 0, "failed": 0, "skipped": 0}
+            logger.error("Failed to parse pytest report", error=str(e), exc_info=True)
+            # Re-raise to preserve error context instead of silently returning empty dict
+            raise
 
     async def validate_requirements_coverage(self) -> Dict[str, bool]:
         """
@@ -271,20 +296,12 @@ class VectorIsolationTestRunner:
             "PERF-002": "Indexing Performance",
         }
 
-        coverage = {}
-
-        # TODO: Replace this placeholder logic with real requirement tracking
-        # For now, assume coverage if we have any tests in relevant categories
-        for req_id, req_name in requirements.items():
-            if self.results.total_tests > 0:
-                coverage[req_id] = True
-                logger.info(f"Requirement {req_id} covered by tests", name=req_name)
-            else:
-                coverage[req_id] = False
-                logger.warning(f"Requirement {req_id} not covered", name=req_name)
-
-        self.results.requirements_coverage = coverage
-        return coverage
+        # FIXME: This is a stub implementation - raise NotImplementedError until proper tracking is added
+        raise NotImplementedError(
+            "TODO(JEEX): Implement proper requirements-to-test coverage mapping. "
+            "Current placeholder logic (assume coverage if tests exist) is insufficient for production use. "
+            "Real implementation should map test functions to requirement IDs via decorators/metadata."
+        )
 
     async def generate_report(self) -> Dict[str, Any]:
         """
@@ -293,7 +310,7 @@ class VectorIsolationTestRunner:
         Returns:
             Detailed test report
         """
-        duration = time.time() - self.start_time if self.start_time else 0
+        duration = (time.time() - self.start_time) if self.start_time is not None else 0
 
         # Get performance statistics
         perf_stats = self.results.performance_metrics.get_statistics()
@@ -368,9 +385,10 @@ class VectorIsolationTestRunner:
                 category_results[category] = result
             except Exception as e:
                 error_msg = f"Failed to run {category} tests: {e}"
-                logger.error(error_msg, traceback=traceback.format_exc())
+                logger.exception(error_msg, exc_info=True)
                 self.results.errors.append(error_msg)
                 category_results[category] = {"error": str(e)}
+                # Continue with other categories but track error
 
         # Validate requirements coverage
         await self.validate_requirements_coverage()
@@ -389,12 +407,15 @@ class VectorIsolationTestRunner:
 
         return report
 
-    def print_summary(self, report: Dict[str, Any]):
+    def print_summary(self, report: Dict[str, Any]) -> int:
         """
-        Print human-readable test summary.
+        Print human-readable test summary and return exit code.
 
         Args:
             report: Test report to summarize
+
+        Returns:
+            Exit code (0 for success, 1 for failure)
         """
         print("\n" + "=" * 80)
         print("VECTOR DATABASE ISOLATION TEST RESULTS")

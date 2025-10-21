@@ -84,20 +84,36 @@ def main():
 
     print("\n🧮 Checking test fixtures...")
     try:
-        from fixtures.vector_test_data import VectorTestDataGenerator
+        import importlib.util
+        import sys
 
+        # Load the fixture file dynamically using importlib
+        # NOTE: We use dynamic import here to avoid modifying sys.path and to maintain
+        # test isolation. This approach allows us to load modules from absolute paths
+        # without affecting Python's module search path or creating potential conflicts
+        # with other test modules. This is particularly important for CI/CD environments
+        # where test isolation is critical.
+        spec = importlib.util.spec_from_file_location(
+            "vector_test_data",
+            "/Users/techmeat/www/projects/jeex-idea/backend/tests/fixtures/vector_test_data.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["vector_test_data"] = module
+        spec.loader.exec_module(module)
+
+        VectorTestDataGenerator = module.VectorTestDataGenerator
         generator = VectorTestDataGenerator()
         test_data = generator.generate_isolation_test_scenarios()
 
         # Validate structure
         assert "projects" in test_data
-        assert "vectors" in test_data
+        assert "all_vectors" in test_data
         assert "scenarios" in test_data
         assert len(test_data["projects"]) >= 3
 
         print("  ✅ VectorTestDataGenerator works correctly")
         print(f"  ✅ Generated {len(test_data['projects'])} test projects")
-        print(f"  ✅ Generated {len(test_data['vectors'])} test vectors")
+        print(f"  ✅ Generated {len(test_data['all_vectors'])} test vectors")
     except Exception as e:
         print(f"  ❌ Test fixture validation failed: {e}")
         all_valid = False

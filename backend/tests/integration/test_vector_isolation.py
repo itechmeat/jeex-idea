@@ -73,9 +73,9 @@ class VectorIsolationTester:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit with cleanup."""
+        await self.cleanup_test_data()
         if self.client:
             await self.client.aclose()
-        await self.cleanup_test_data()
 
     async def setup_test_data(self) -> Dict[str, Any]:
         """
@@ -136,20 +136,40 @@ class VectorIsolationTester:
         for i in range(0, len(api_vectors), batch_size):
             batch = api_vectors[i : i + batch_size]
 
-            response = await self.client.post(
-                "/api/v1/vector/upsert",
-                json={"points": batch},
-                params={"project_id": project_id, "language": language},
-            )
+            try:
+                response = await self.client.post(
+                    "/api/v1/vector/upsert",
+                    json={"points": batch},
+                    params={"project_id": project_id, "language": language},
+                )
 
-            assert response.status_code == 200, (
-                f"Failed to insert vectors: {response.status_code} - {response.text}"
-            )
+                if response.status_code != 200:
+                    logger.error(
+                        "Failed to upsert vectors",
+                        status_code=response.status_code,
+                        response_text=response.text,
+                        project_id=project_id,
+                        language=language,
+                        batch_size=len(batch),
+                    )
 
-            result = response.json()
-            assert result["points_processed"] == len(batch), (
-                f"Expected {len(batch)} points processed, got {result['points_processed']}"
-            )
+                assert response.status_code == 200, (
+                    f"Failed to insert vectors: {response.status_code} - {response.text}"
+                )
+
+                result = response.json()
+                assert result["points_processed"] == len(batch), (
+                    f"Expected {len(batch)} points processed, got {result['points_processed']}"
+                )
+            except Exception as e:
+                logger.exception(
+                    "Vector upsert failed",
+                    project_id=project_id,
+                    language=language,
+                    batch_index=i,
+                    exc_info=True,
+                )
+                raise
 
     async def search_vectors(
         self, project_id: str, language: str, query_vector: List[float], limit: int = 50
@@ -171,6 +191,16 @@ class VectorIsolationTester:
             json={"query_vector": query_vector, "limit": limit},
             params={"project_id": project_id, "language": language},
         )
+
+        if response.status_code != 200:
+            logger.error(
+                "Vector search failed",
+                status_code=response.status_code,
+                response_text=response.text,
+                project_id=project_id,
+                language=language,
+                limit=limit,
+            )
 
         assert response.status_code == 200, (
             f"Search failed: {response.status_code} - {response.text}"
@@ -198,7 +228,24 @@ class VectorIsolationTester:
         )
 
         if response.status_code == 404:
+            logger.debug(
+                "Vector point not found or not accessible",
+                point_id=point_id,
+                project_id=project_id,
+                language=language,
+                status_code=404,
+            )
             return None
+
+        if response.status_code != 200:
+            logger.error(
+                "Get vector point failed",
+                status_code=response.status_code,
+                response_text=response.text,
+                point_id=point_id,
+                project_id=project_id,
+                language=language,
+            )
 
         assert response.status_code == 200, (
             f"Failed to get point: {response.status_code} - {response.text}"
@@ -223,14 +270,27 @@ class VectorIsolationTester:
                 project_id = self.test_data["projects"][0]["id"]
                 language = self.test_data["projects"][0]["language"]
 
-                response = await self.client.delete(
-                    "/api/v1/vector/points",
-                    params=batch,
-                    params_context={"project_id": project_id, "language": language},
-                )
+                try:
+                    # DELETE with JSON body containing point_ids array
+                    response = await self.client.delete(
+                        "/api/v1/vector/points",
+                        params={"project_id": project_id, "language": language},
+                        json={"point_ids": [str(pid) for pid in batch]},
+                    )
 
-                # Note: This might fail due to isolation, which is expected
-                # The cleanup will be handled by the repository level
+                    if response.status_code not in [200, 204]:
+                        logger.warning(
+                            "Cleanup delete request failed (expected due to isolation)",
+                            status_code=response.status_code,
+                            response_text=response.text,
+                            batch_size=len(batch),
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "Cleanup failed (expected due to isolation constraints)",
+                        error=str(e),
+                        exc_info=True,
+                    )
 
         self.created_points.clear()
 
@@ -401,37 +461,28 @@ async def test_project_isolation_no_bypass_possible(
         pytest.skip("Need at least 2 projects for bypass testing")
 
     # Try to search without project_id (should fail)
-    try:
-        response = await vector_isolation_tester.client.post(
-            "/api/v1/vector/search",
-            json={"query_vector": [0.1] * 1536, "limit": 10},
-            # No project_id or language params
-        )
-        assert False, "Should require project_id and language parameters"
-    except httpx.HTTPStatusError as e:
-        assert e.response.status_code == 422, "Should return validation error"
+    response = await vector_isolation_tester.client.post(
+        "/api/v1/vector/search",
+        json={"query_vector": [0.1] * 1536, "limit": 10},
+        # No project_id or language params
+    )
+    assert response.status_code == 422, "Should return validation error"
 
     # Try to search with invalid project_id format
-    try:
-        response = await vector_isolation_tester.client.post(
-            "/api/v1/vector/search",
-            json={"query_vector": [0.1] * 1536, "limit": 10},
-            params={"project_id": "invalid-uuid", "language": "en"},
-        )
-        assert False, "Should reject invalid project_id format"
-    except httpx.HTTPStatusError as e:
-        assert e.response.status_code == 400, "Should return bad request error"
+    response = await vector_isolation_tester.client.post(
+        "/api/v1/vector/search",
+        json={"query_vector": [0.1] * 1536, "limit": 10},
+        params={"project_id": "invalid-uuid", "language": "en"},
+    )
+    assert response.status_code == 400, "Should return bad request error"
 
     # Try to search with invalid language code
-    try:
-        response = await vector_isolation_tester.client.post(
-            "/api/v1/vector/search",
-            json={"query_vector": [0.1] * 1536, "limit": 10},
-            params={"project_id": projects[0]["id"], "language": "invalid-lang"},
-        )
-        assert False, "Should reject invalid language code"
-    except httpx.HTTPStatusError as e:
-        assert e.response.status_code == 400, "Should return bad request error"
+    response = await vector_isolation_tester.client.post(
+        "/api/v1/vector/search",
+        json={"query_vector": [0.1] * 1536, "limit": 10},
+        params={"project_id": projects[0]["id"], "language": "invalid-lang"},
+    )
+    assert response.status_code == 400, "Should return bad request error"
 
     logger.info("Project isolation bypass test passed - all attempts properly rejected")
 
@@ -571,36 +622,30 @@ async def test_server_side_filter_enforcement_mandatory(vector_isolation_tester)
     # by attempting searches that should be rejected
 
     # Test missing project_id
-    try:
-        response = await vector_isolation_tester.client.post(
-            "/api/v1/vector/search",
-            json={"query_vector": [0.1] * 1536, "limit": 10},
-            params={
-                "language": "en"
-                # Missing project_id
-            },
-        )
-        assert False, "Should reject missing project_id"
-    except httpx.HTTPStatusError as e:
-        assert e.response.status_code == 422, (
-            "Should return validation error for missing project_id"
-        )
+    response = await vector_isolation_tester.client.post(
+        "/api/v1/vector/search",
+        json={"query_vector": [0.1] * 1536, "limit": 10},
+        params={
+            "language": "en"
+            # Missing project_id
+        },
+    )
+    assert response.status_code == 422, (
+        f"Should return validation error for missing project_id, got {response.status_code}"
+    )
 
     # Test missing language
-    try:
-        response = await vector_isolation_tester.client.post(
-            "/api/v1/vector/search",
-            json={"query_vector": [0.1] * 1536, "limit": 10},
-            params={
-                "project_id": str(uuid4())
-                # Missing language
-            },
-        )
-        assert False, "Should reject missing language"
-    except httpx.HTTPStatusError as e:
-        assert e.response.status_code == 422, (
-            "Should return validation error for missing language"
-        )
+    response = await vector_isolation_tester.client.post(
+        "/api/v1/vector/search",
+        json={"query_vector": [0.1] * 1536, "limit": 10},
+        params={
+            "project_id": str(uuid4())
+            # Missing language
+        },
+    )
+    assert response.status_code == 422, (
+        f"Should return validation error for missing language, got {response.status_code}"
+    )
 
     # Test valid search works
     response = await vector_isolation_tester.client.post(

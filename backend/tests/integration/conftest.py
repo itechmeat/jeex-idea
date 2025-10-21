@@ -96,6 +96,7 @@ async def vector_client(integration_config):
     except httpx.ConnectError:
         pytest.skip("Vector service not reachable - ensure it's running")
     except Exception as e:
+        logger.exception("Vector service setup failed", exc_info=True)
         pytest.skip(f"Vector service setup failed: {e}")
     finally:
         await client.aclose()
@@ -251,19 +252,31 @@ class VectorTestHelper:
         Args:
             project_id: Project UUID
             language: Language code
+
+        Raises:
+            NotImplementedError: Cleanup not implemented due to isolation constraints
         """
         if not self.created_points:
             return
 
         try:
-            # Note: Cleanup is best-effort due to isolation constraints
-            # Individual tests should handle their own cleanup with proper context
-            logger.info(
-                "Vector cleanup skipped due to isolation constraints",
+            # CRITICAL: Cleanup is not implemented due to strict isolation constraints
+            # Individual tests must handle their own cleanup with proper project context
+            # to ensure deletion operations respect multi-tenant boundaries
+            logger.error(
+                "Vector cleanup not implemented",
                 points_count=len(self.created_points),
+                reason="isolation_constraints",
             )
+            raise NotImplementedError(
+                "Vector cleanup not implemented due to isolation constraints. "
+                "Tests must handle cleanup within proper project context."
+            )
+        except NotImplementedError:
+            raise
         except Exception as e:
-            logger.warning("Vector cleanup failed", error=str(e))
+            logger.exception("Vector cleanup failed unexpectedly", exc_info=True)
+            raise
         finally:
             self.created_points.clear()
 

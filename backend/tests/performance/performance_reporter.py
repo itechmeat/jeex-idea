@@ -65,6 +65,27 @@ class PerformanceReporter:
             "memory_usage_mb": 1000.0,
         }
 
+    def _format_dataset_size(self, dataset_size_raw: Any) -> str:
+        """
+        Safely format dataset size with type checking and error handling.
+
+        Args:
+            dataset_size_raw: Raw dataset size value (int, float, str, or other)
+
+        Returns:
+            Formatted string with thousand separators or "N/A" if invalid
+        """
+        try:
+            dataset_size = (
+                int(dataset_size_raw)
+                if isinstance(dataset_size_raw, (int, float, str))
+                and str(dataset_size_raw).isdigit()
+                else "N/A"
+            )
+            return f"{dataset_size:,}" if dataset_size != "N/A" else "N/A"
+        except (ValueError, TypeError):
+            return "N/A"
+
     async def generate_html_report(self, results: Dict[str, Any]) -> str:
         """
         Generate comprehensive HTML performance dashboard.
@@ -75,7 +96,7 @@ class PerformanceReporter:
         Returns:
             Path to generated HTML report
         """
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         html_file = self.output_dir / f"performance_dashboard_{timestamp}.html"
 
         # Generate HTML content
@@ -101,7 +122,7 @@ class PerformanceReporter:
         Returns:
             Path to generated CSV file
         """
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         csv_file = self.output_dir / f"benchmark_results_{timestamp}.csv"
 
         # Flatten results for CSV export
@@ -127,7 +148,7 @@ class PerformanceReporter:
         Returns:
             Path to generated trend analysis report
         """
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         trend_file = self.output_dir / f"trend_analysis_{timestamp}.json"
 
         # Load historical data if available
@@ -541,7 +562,11 @@ class PerformanceReporter:
         table_html = f'<table class="table"><thead><tr><th>Dataset Size</th><th>P50 Latency</th><th>P95 Latency</th><th>P99 Latency</th><th>Throughput</th><th>Errors</th></tr></thead><tbody>'
 
         for result in performance_data:
-            dataset_size = result.get("dataset_size", "N/A")
+            # Safe dataset_size formatting with type checking
+            dataset_size_formatted = self._format_dataset_size(
+                result.get("dataset_size", "N/A")
+            )
+
             p50 = result.get("latency_p50", 0)
             p95 = result.get("latency_p95", 0)
             p99 = result.get("latency_p99", 0)
@@ -558,7 +583,7 @@ class PerformanceReporter:
 
             table_html += f"""
             <tr>
-                <td>{dataset_size:,}</td>
+                <td>{dataset_size_formatted}</td>
                 <td class="performance-metric">{p50:.1f}ms</td>
                 <td class="performance-metric {p95_class}">{p95:.1f}ms</td>
                 <td class="performance-metric">{p99:.1f}ms</td>
@@ -582,7 +607,11 @@ class PerformanceReporter:
         table_html = '<table class="table"><thead><tr><th>Dataset Size</th><th>P95 Latency</th><th>Throughput</th><th>Memory Usage</th></tr></thead><tbody>'
 
         for data in search_scaling:
-            dataset_size = data.get("dataset_size", "N/A")
+            # Safe dataset_size formatting with type checking
+            dataset_size_formatted = self._format_dataset_size(
+                data.get("dataset_size", "N/A")
+            )
+
             latency = data.get("latency_p95", 0)
             throughput = data.get("throughput", 0)
             memory = data.get("memory_usage_mb", 0)
@@ -593,7 +622,7 @@ class PerformanceReporter:
 
             table_html += f"""
             <tr>
-                <td>{dataset_size:,}</td>
+                <td>{dataset_size_formatted}</td>
                 <td class="performance-metric {latency_class}">{latency:.1f}ms</td>
                 <td class="performance-metric">{throughput:.1f}</td>
                 <td class="performance-metric">{memory:.1f}MB</td>
@@ -650,7 +679,12 @@ class PerformanceReporter:
         for result in upsert_results:
             flat_result = {
                 "category": "upsert_performance",
-                "batch_size": result.get("additional_data", {}).get("batch_size"),
+                "batch_size": result.get("additional_data", {}).get(
+                    "batch_size", result.get("batch_size")
+                ),
+                "concurrency": result.get("additional_data", {}).get(
+                    "concurrency", result.get("concurrency")
+                ),
                 "dataset_size": result.get("dataset_size"),
                 "operation": result.get("operation"),
                 "duration_ms": result.get("duration_ms"),
@@ -669,7 +703,12 @@ class PerformanceReporter:
         for result in concurrent_results:
             flat_result = {
                 "category": "concurrent_search",
-                "concurrency": result.get("additional_data", {}).get("concurrency"),
+                "concurrency": result.get("additional_data", {}).get(
+                    "concurrency", result.get("concurrency")
+                ),
+                "batch_size": result.get("additional_data", {}).get(
+                    "batch_size", result.get("batch_size")
+                ),
                 "dataset_size": result.get("dataset_size"),
                 "operation": result.get("operation"),
                 "duration_ms": result.get("duration_ms"),
@@ -767,7 +806,11 @@ class PerformanceReporter:
     ):
         """Create upsert performance visualization."""
         try:
-            batch_sizes = [d["additional_data"]["batch_size"] for d in data]
+            # Safe batch_size extraction with fallback
+            batch_sizes = [
+                d.get("additional_data", {}).get("batch_size", d.get("batch_size"))
+                for d in data
+            ]
             throughputs = [d["throughput"] for d in data]
 
             fig, ax = plt.subplots(figsize=(10, 6))

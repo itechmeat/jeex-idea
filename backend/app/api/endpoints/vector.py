@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 import structlog
 
 from ...core.vector import get_vector_search_service, get_vector_repository
@@ -61,10 +61,62 @@ class VectorSearchRequest(BaseModel):
     }
 
 
+class VectorUpsertPoint(BaseModel):
+    """Schema for individual vector point data with validation."""
+
+    id: Optional[UUID] = Field(
+        default=None,
+        description="Optional UUID for the point. If not provided, will be generated.",
+    )
+    vector: List[float] = Field(
+        ...,
+        min_length=1536,
+        max_length=1536,
+        description="Vector embedding with 1536 dimensions (normalized between -1 and 1)",
+    )
+    content: str = Field(
+        ...,
+        min_length=1,
+        description="Content text for the vector point",
+    )
+    type: str = Field(
+        ...,
+        description="Document type (knowledge, memory, agent_context)",
+    )
+    title: Optional[str] = Field(
+        default=None,
+        description="Optional title for the vector point",
+    )
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Optional metadata dictionary (cannot contain reserved fields)",
+    )
+    importance: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Importance score between 0.0 and 1.0 (default: 1.0)",
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+                "vector": [0.1] * 1536,
+                "content": "Document content here",
+                "title": "Document title",
+                "type": "knowledge",
+                "metadata": {"source": "manual", "category": "documentation"},
+                "importance": 0.8,
+            }
+        }
+    )
+
+
 class VectorUpsertRequest(BaseModel):
     """Request schema for vector upsert."""
 
-    points: List[Dict[str, Any]] = Field(
+    points: List[VectorUpsertPoint] = Field(
         ...,
         min_length=1,
         max_length=100,
@@ -331,7 +383,7 @@ async def upsert_vectors(
     from the request context. These fields cannot be overridden.
 
     Args:
-        request: Upsert request with vector points
+        request: Upsert request with validated vector points
         context: Search context for project and language assignment
         repository: Vector repository
 
@@ -346,19 +398,26 @@ async def upsert_vectors(
 
         start_time = time.time()
 
-        # Convert API request to domain objects
+        # Validate batch size (already enforced by Pydantic max_length)
+        if len(request.points) > 100:
+            raise ValueError("Maximum batch size is 100 points")
+
+        # Convert validated API request to domain objects
         vector_points = []
         for point_data in request.points:
-            # Extract and validate required fields
-            vector = VectorData(point_data["vector"])
-            content = point_data["content"]
-            title = point_data.get("title")
-            document_type = DocumentType(point_data["type"])
-            metadata = point_data.get("metadata", {})
-            importance = point_data.get("importance", 1.0)
+            # Use validated data from Pydantic model
+            vector = VectorData(point_data.vector)
+            content = point_data.content
+            title = point_data.title
+            document_type = DocumentType(point_data.type)
+            metadata = point_data.metadata or {}
+            importance = (
+                point_data.importance if point_data.importance is not None else 1.0
+            )
 
             # Create vector point with mandatory context fields
             point = VectorPoint(
+                id=point_data.id,  # Use provided ID or generate if None
                 vector=vector,
                 content=content,
                 title=title,
@@ -369,10 +428,6 @@ async def upsert_vectors(
                 language=context.language,  # MANDATORY from context
             )
             vector_points.append(point)
-
-        # Validate batch size
-        if len(vector_points) > 100:
-            raise ValueError("Maximum batch size is 100 points")
 
         # Perform upsert with explicit project_id for security validation
         await repository.upsert_points(context.project_id, vector_points)

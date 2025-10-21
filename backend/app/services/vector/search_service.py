@@ -110,8 +110,8 @@ class DefaultVectorSearchService(VectorSearchService):
                     )
 
         # Validate limit
-        if limit <= 0 or limit > 50:
-            raise ValueError(f"Invalid limit: {limit}. Must be between 1 and 50")
+        if limit <= 0 or limit > 100:
+            raise ValueError(f"Invalid limit: {limit}. Must be between 1 and 100")
 
         # Delegate to repository with enforced filters
         return await self.repository.search_similar(
@@ -135,7 +135,7 @@ class DefaultVectorSearchService(VectorSearchService):
         """
         Perform hybrid search combining text and vector similarity.
 
-        TODO(JEEX): Implement true hybrid search combining text + vector similarity
+        TODO(JEEX-VECTOR-003): Implement true hybrid search combining text + vector similarity
         Current implementation is incomplete and ignores query_text parameter.
         Production hybrid search should:
         1. Perform text-based keyword search (BM25/full-text)
@@ -143,6 +143,9 @@ class DefaultVectorSearchService(VectorSearchService):
         3. Combine scores using text_weight and vector_weight
         4. Merge and re-rank results
         For now, this uses vector-only search with simplified scoring adjustment.
+
+        Reference: See story "Setup Vector Database" for implementation roadmap
+        Priority: Medium (required for production-ready semantic search)
 
         Args:
             query_text: Text query for keyword search (currently ignored - see TODO)
@@ -155,31 +158,12 @@ class DefaultVectorSearchService(VectorSearchService):
         Returns:
             List of hybrid search results
         """
-        # Validate weights
-        if not (0.0 <= text_weight <= 1.0) or not (0.0 <= vector_weight <= 1.0):
-            raise ValueError("Weights must be between 0.0 and 1.0")
-
-        if abs(text_weight + vector_weight - 1.0) > 0.01:
-            raise ValueError("Weights must sum to 1.0")
-
-        # For now, prioritize vector search with slight text influence
-        # In a full implementation, this would include text-based search
-        vector_results = await self.search(
-            query_vector=query_vector,
-            context=context,
-            limit=limit,
+        # TODO(JEEX-VECTOR-003): Remove this NotImplementedError once hybrid search is implemented
+        # Track this feature in your issue tracker for proper prioritization
+        raise NotImplementedError(
+            "hybrid_search not implemented: query_text handling and true hybrid ranking TODO. "
+            "See JEEX-VECTOR-003 for implementation details."
         )
-
-        # Apply weight-based scoring adjustment (simplified)
-        for result in vector_results:
-            # Adjust score based on weights (simplified hybrid scoring)
-            # In production, this would combine actual text search scores
-            adjusted_score = (
-                result.score * vector_weight + (1 - result.score) * text_weight
-            )
-            result.score = min(max(adjusted_score, 0.0), 1.0)  # Clamp to [0, 1]
-
-        return vector_results
 
 
 def build_mandatory_filter(project_id: UUID, language: str) -> Dict[str, Any]:

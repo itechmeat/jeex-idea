@@ -174,14 +174,14 @@ Each language contains domain-specific content:
 - Natural language processing
 
 **Russian (ru)**:
-- Машинное обучение (Machine Learning)
-- Нейронные сети (Neural Networks)
-- Обработка естественного языка (NLP)
+- Machine learning and deep learning content
+- Neural networks and architectures
+- Natural language processing
 
 **Spanish (es)**:
-- Aprendizaje automático (Machine Learning)
-- Redes neuronales (Neural Networks)
-- Procesamiento del lenguaje natural (NLP)
+- Machine learning and automation content
+- Neural networks research
+- Natural language processing applications
 
 ## Test Results Interpretation
 
@@ -257,12 +257,6 @@ jobs:
   vector-tests:
     runs-on: ubuntu-latest
 
-    services:
-      qdrant:
-        image: qdrant/qdrant:latest
-        ports:
-          - 5230:6333
-
     steps:
     - uses: actions/checkout@v3
 
@@ -305,7 +299,7 @@ COPY requirements-test.txt .
 RUN pip install -r requirements-test.txt
 
 COPY . .
-RUN python tests/integration/run_vector_isolation_tests.py --category all
+RUN python backend/tests/integration/run_vector_isolation_tests.py --category all
 ```
 
 ## Troubleshooting

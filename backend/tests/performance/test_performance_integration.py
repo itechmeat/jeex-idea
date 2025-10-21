@@ -232,9 +232,9 @@ class TestPerformanceFrameworkValidation:
         p95 = benchmark._percentile(data, 95)
         p99 = benchmark._percentile(data, 99)
 
-        assert p50 == 5.5  # Median
-        assert p95 == 9.55
-        assert p99 == 9.91
+        assert abs(p50 - 5.5) < 1e-10  # Median
+        assert abs(p95 - 9.55) < 1e-10
+        assert abs(p99 - 9.91) < 1e-10
 
         # Test with empty data
         empty_p95 = benchmark._percentile([], 95)
@@ -249,11 +249,16 @@ class TestPerformanceFrameworkValidation:
         assert 1000 in normal_sizes
         assert 100000 in normal_sizes
 
-        # Test quick mode
-        config.test_config.quick_mode = True
-        quick_sizes = config.get_dataset_sizes()
-        assert len(quick_sizes) <= len(normal_sizes)
-        assert all(size in normal_sizes for size in quick_sizes)
+        # Test quick mode - save original state and restore after test
+        original_quick_mode = config.test_config.quick_mode
+        try:
+            config.test_config.quick_mode = True
+            quick_sizes = config.get_dataset_sizes()
+            assert len(quick_sizes) <= len(normal_sizes)
+            assert all(size in normal_sizes for size in quick_sizes)
+        finally:
+            # Restore original state to avoid leaking into other tests
+            config.test_config.quick_mode = original_quick_mode
 
     def test_performance_targets_consistency(self):
         """Test that performance targets are internally consistent."""

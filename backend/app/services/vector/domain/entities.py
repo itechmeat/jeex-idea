@@ -127,7 +127,9 @@ class VectorPoint:
     This is the core aggregate root for vector operations.
     """
 
-    vector: VectorData
+    vector: Optional[
+        VectorData
+    ]  # Made optional to support search results without vectors
     content: str
     project_id: ProjectId
     language: LanguageCode
@@ -168,11 +170,25 @@ class VectorPoint:
         if metadata_conflicts:
             raise ValueError(f"Metadata contains reserved fields: {metadata_conflicts}")
 
-    def update_content(self, new_content: str) -> None:
-        """Update content and related fields."""
-        self.content = new_content
-        self.content_hash = ContentHash.from_content(new_content)
-        self.updated_at = datetime.utcnow()
+    def update_content(self, new_content: str) -> "VectorPoint":
+        """
+        Update content and related fields, returning a new instance.
+
+        Args:
+            new_content: New content string
+
+        Returns:
+            New VectorPoint instance with updated content
+        """
+        from dataclasses import replace
+        from datetime import datetime, timezone
+
+        return replace(
+            self,
+            content=new_content,
+            content_hash=ContentHash.from_content(new_content),
+            updated_at=datetime.now(timezone.utc),
+        )
 
     def get_qdrant_payload(self) -> Dict[str, Any]:
         """Convert to Qdrant payload format."""
@@ -181,6 +197,7 @@ class VectorPoint:
             "language": str(self.language),
             "type": self.document_type.value,
             "content_hash": str(self.content_hash),
+            "content": self.content or "",
             "title": self.title,
             "metadata": self.metadata,
             "importance": self.importance,
@@ -193,9 +210,42 @@ class VectorPoint:
         cls, point_id: str, vector: List[float], payload: Dict[str, Any]
     ) -> "VectorPoint":
         """Create VectorPoint from Qdrant point data."""
+        # Validate vector is provided and not empty
+        if not vector:
+            raise ValueError(
+                f"Vector data is missing or empty for point {point_id}. "
+                "When retrieving points from Qdrant, ensure you request vectors with with_vectors=True. "
+                "For search results where vectors are not needed, use from_qdrant_search_result instead."
+            )
+
+        if not isinstance(vector, list) or len(vector) == 0:
+            raise ValueError(
+                f"Invalid vector data for point {point_id}: expected non-empty list, got {type(vector).__name__}"
+            )
+
         return cls(
             id=UUID(point_id),
             vector=VectorData(vector),
+            content=payload.get("content", ""),
+            content_hash=ContentHash(payload.get("content_hash", "")),
+            project_id=ProjectId(payload["project_id"]),
+            language=LanguageCode(payload["language"]),
+            document_type=DocumentType(payload["type"]),
+            title=payload.get("title"),
+            metadata=payload.get("metadata", {}),
+            importance=payload.get("importance", 1.0),
+            created_at=datetime.fromisoformat(payload["created_at"]),
+            updated_at=datetime.fromisoformat(payload["updated_at"]),
+        )
+
+    @classmethod
+    def from_qdrant_search_result(
+        cls, point_id: str, payload: Dict[str, Any]
+    ) -> "VectorPoint":
+        """Create VectorPoint from Qdrant search result (without vector data)."""
+        return cls(
+            id=UUID(point_id),
+            vector=None,  # No vector data in search results
             content=payload.get("content", ""),
             content_hash=ContentHash(payload.get("content_hash", "")),
             project_id=ProjectId(payload["project_id"]),

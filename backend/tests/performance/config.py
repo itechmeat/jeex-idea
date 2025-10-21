@@ -156,6 +156,14 @@ class PerformanceTestConfig:
 
     def _apply_environment_overrides(self):
         """Apply environment-specific configuration overrides."""
+        # Validate environment value
+        allowed_environments = {"ci", "production", "development"}
+        if self.environment not in allowed_environments:
+            raise ValueError(
+                f"Unsupported environment '{self.environment}'. "
+                f"Allowed values: {', '.join(sorted(allowed_environments))}"
+            )
+
         if self.environment == "ci":
             # CI/CD environment - faster tests
             self.test_config.quick_mode = True
@@ -227,14 +235,26 @@ class PerformanceTestConfig:
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "PerformanceTestConfig":
         """Create configuration from dictionary."""
-        config = cls()
-        config.environment = config_dict.get("environment", "development")
-        config.targets = PerformanceTargets(**config_dict.get("targets", {}))
-        config.test_config = TestConfiguration(**config_dict.get("test_config", {}))
-        config.env_config = EnvironmentConfiguration(
-            **config_dict.get("env_config", {})
-        )
-        config.hnsw_config = HNSWConfiguration(**config_dict.get("hnsw_config", {}))
+        # Extract environment from dict or use default
+        environment = config_dict.get("environment", "development")
+
+        # Create instance with specific environment
+        config = cls(environment=environment)
+
+        # Override configuration components from dict if provided
+        if "targets" in config_dict:
+            config.targets = PerformanceTargets(**config_dict["targets"])
+        if "test_config" in config_dict:
+            config.test_config = TestConfiguration(**config_dict["test_config"])
+        if "env_config" in config_dict:
+            config.env_config = EnvironmentConfiguration(**config_dict["env_config"])
+        if "hnsw_config" in config_dict:
+            config.hnsw_config = HNSWConfiguration(**config_dict["hnsw_config"])
+
+        # Re-apply environment overrides and validation after setting components
+        config._apply_environment_overrides()
+        config._validate_configuration()
+
         return config
 
 

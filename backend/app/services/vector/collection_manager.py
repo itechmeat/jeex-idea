@@ -8,6 +8,7 @@ health monitoring, and administrative operations.
 import asyncio
 from datetime import datetime
 from typing import Dict, Any, Optional, List
+from urllib.parse import urlparse
 
 import structlog
 from qdrant_client import QdrantClient
@@ -37,9 +38,33 @@ class VectorCollectionManager:
         Args:
             qdrant_url: Qdrant server URL
             timeout: Request timeout in seconds
+
+        Raises:
+            ValueError: If qdrant_url is invalid or timeout is not positive
         """
+        # Validate qdrant_url
+        if not qdrant_url or not qdrant_url.strip():
+            raise ValueError("qdrant_url cannot be empty or whitespace only")
+
+        try:
+            parsed_url = urlparse(qdrant_url.strip())
+            if not parsed_url.scheme or not parsed_url.netloc:
+                raise ValueError(
+                    "qdrant_url must be a valid URL with scheme and netloc"
+                )
+            if parsed_url.scheme not in ["http", "https"]:
+                raise ValueError("qdrant_url must use http or https scheme")
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError(f"qdrant_url is not a valid URL: {e}") from e
+
+        # Validate timeout
+        if not isinstance(timeout, int) or timeout <= 0:
+            raise ValueError("timeout must be a positive integer")
+
         self.client = QdrantClient(
-            url=qdrant_url,
+            url=qdrant_url.strip(),
             timeout=timeout,
         )
         self.repository = QdrantVectorRepository(self.client)

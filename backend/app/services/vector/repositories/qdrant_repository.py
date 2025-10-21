@@ -71,47 +71,46 @@ class QdrantVectorRepository(VectorRepository):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=4, max=10),
-        retry=retry_if_exception_type((ConnectionError, TimeoutError)),
+        retry=retry_if_exception_type(
+            (ConnectionError, TimeoutError, RuntimeError, UnexpectedResponse)
+        ),
+        reraise=True,
     )
     async def initialize_collection(self) -> None:
         """Initialize collection with optimal HNSW configuration."""
-        try:
-            if not await self.collection_exists():
-                # Create collection with optimized HNSW configuration
-                await asyncio.to_thread(
-                    self.client.create_collection,
-                    collection_name=self.COLLECTION_NAME,
-                    vectors_config=models.VectorParams(
-                        size=self.VECTOR_SIZE,
-                        distance=models.Distance.COSINE,
-                        hnsw_config=models.HnswConfigDiff(
-                            m=self.HNSW_M,
-                            payload_m=self.HNSW_PAYLOAD_M,
-                            ef_construct=self.HNSW_EF_CONSTRUCT,
-                            full_scan_threshold=self.FULL_SCAN_THRESHOLD,
-                        ),
+        if not await self.collection_exists():
+            # Create collection with optimized HNSW configuration
+            await asyncio.to_thread(
+                self.client.create_collection,
+                collection_name=self.COLLECTION_NAME,
+                vectors_config=models.VectorParams(
+                    size=self.VECTOR_SIZE,
+                    distance=models.Distance.COSINE,
+                    hnsw_config=models.HnswConfigDiff(
+                        m=self.HNSW_M,
+                        payload_m=self.HNSW_PAYLOAD_M,
+                        ef_construct=self.HNSW_EF_CONSTRUCT,
+                        full_scan_threshold=self.FULL_SCAN_THRESHOLD,
                     ),
-                    optimizers_config=models.OptimizersConfigDiff(
-                        indexing_threshold=self.INDEXING_THRESHOLD
-                    ),
-                    replication_factor=1,  # Single node configuration
-                    shard_number=1,  # Single shard for development
-                )
-                logger.info(
-                    "Created collection with HNSW optimization",
-                    collection_name=self.COLLECTION_NAME,
-                    vector_size=self.VECTOR_SIZE,
-                    hnsw_m=self.HNSW_M,
-                    hnsw_payload_m=self.HNSW_PAYLOAD_M,
-                    hnsw_ef_construct=self.HNSW_EF_CONSTRUCT,
-                    operation="create_collection",
-                )
+                ),
+                optimizers_config=models.OptimizersConfigDiff(
+                    indexing_threshold=self.INDEXING_THRESHOLD
+                ),
+                replication_factor=1,  # Single node configuration
+                shard_number=1,  # Single shard for development
+            )
+            logger.info(
+                "Created collection with HNSW optimization",
+                collection_name=self.COLLECTION_NAME,
+                vector_size=self.VECTOR_SIZE,
+                hnsw_m=self.HNSW_M,
+                hnsw_payload_m=self.HNSW_PAYLOAD_M,
+                hnsw_ef_construct=self.HNSW_EF_CONSTRUCT,
+                operation="create_collection",
+            )
 
-            # Create required indexes
-            await self.create_indexes()
-
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize collection: {e}") from e
+        # Create required indexes
+        await self.create_indexes()
 
     async def collection_exists(self) -> bool:
         """Check if collection exists."""
@@ -131,7 +130,7 @@ class QdrantVectorRepository(VectorRepository):
                 self.client.get_collection, self.COLLECTION_NAME
             )
             return {
-                "name": info.config.params.vectors.size,
+                "name": self.COLLECTION_NAME,  # Use the collection name we requested
                 "vector_size": info.config.params.vectors.size,
                 "distance": str(info.config.params.vectors.distance),
                 "points_count": info.points_count,
@@ -294,6 +293,11 @@ class QdrantVectorRepository(VectorRepository):
 
         # Validate all points before batch processing
         for point in points:
+            if point.vector is None:
+                raise ValueError(
+                    f"Vector data is required for point {point.id} but got None. "
+                    "All points must have vector data for upsert operations."
+                )
             if len(point.vector) != self.VECTOR_SIZE:
                 raise ValueError(
                     f"Invalid vector dimension: {len(point.vector)}, expected {self.VECTOR_SIZE}"
@@ -315,7 +319,7 @@ class QdrantVectorRepository(VectorRepository):
             for point in batch:
                 qdrant_point = models.PointStruct(
                     id=str(point.id),
-                    vector=point.vector.to_list(),
+                    vector=point.vector.to_list() if point.vector else None,
                     payload=point.get_qdrant_payload(),
                 )
                 qdrant_points.append(qdrant_point)
@@ -471,9 +475,8 @@ class QdrantVectorRepository(VectorRepository):
                 # Validate score is within expected range
                 score = min(max(scored_point.score, 0.0), 1.0)  # Clamp to [0, 1]
 
-                point = VectorPoint.from_qdrant_point(
+                point = VectorPoint.from_qdrant_search_result(
                     point_id=str(scored_point.id),
-                    vector=[],  # Empty vector since we didn't request it
                     payload=scored_point.payload,
                 )
 
@@ -504,24 +507,14 @@ class QdrantVectorRepository(VectorRepository):
             return
 
         try:
-            # SECURITY: Build filter to ensure only points from this project are deleted
-            project_filter = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="project_id",
-                        match=models.MatchValue(value=str(project_id)),
-                    ),
-                    models.FieldCondition(
-                        key="id",
-                        match=models.MatchAny(any=[str(pid) for pid in point_ids]),
-                    ),
-                ]
-            )
-
+            # SECURITY: Use HasIdCondition for correct ID filtering with project isolation
+            # HasIdCondition handles ID-based filtering properly in Qdrant
             await asyncio.to_thread(
                 self.client.delete,
                 collection_name=self.COLLECTION_NAME,
-                points_selector=project_filter,
+                points_selector=models.HasIdCondition(
+                    has_id=[str(pid) for pid in point_ids]
+                ),
             )
 
             logger.info(
