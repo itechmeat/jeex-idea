@@ -14,6 +14,7 @@ from typing import Dict, Any, Optional, Callable, List, Set
 from uuid import UUID, uuid4
 
 from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 from app.services.queues.queue_manager import (
     queue_manager,
@@ -40,6 +41,7 @@ class QueueWorker:
         worker_id: str,
         task_types: List[TaskType],
         task_handlers: Dict[TaskType, Callable],
+        project_id: UUID,
         max_concurrent_tasks: int = 5,
         poll_interval: float = 1.0,
         worker_timeout: int = 300,
@@ -51,6 +53,7 @@ class QueueWorker:
             worker_id: Unique worker identifier
             task_types: List of task types this worker can handle
             task_handlers: Mapping of task type to handler function
+            project_id: Project ID for task isolation (required)
             max_concurrent_tasks: Maximum concurrent tasks
             poll_interval: Polling interval in seconds
             worker_timeout: Worker timeout in seconds
@@ -58,6 +61,7 @@ class QueueWorker:
         self.worker_id = worker_id
         self.task_types = task_types
         self.task_handlers = task_handlers
+        self.project_id = project_id
         self.max_concurrent_tasks = max_concurrent_tasks
         self.poll_interval = poll_interval
         self.worker_timeout = worker_timeout
@@ -129,7 +133,7 @@ class QueueWorker:
                     continue
 
                 # Try to dequeue a task
-                task_data = await self._dequeue_next_task()
+                task_data = await self._dequeue_next_task(self.project_id)
                 if task_data:
                     # Process task asynchronously
                     asyncio.create_task(self._process_task(task_data))
@@ -143,7 +147,7 @@ class QueueWorker:
                 logger.error(f"Worker {self.worker_id} error in main loop: {e}")
                 await asyncio.sleep(self.poll_interval)
 
-    async def _dequeue_next_task(self) -> Optional[TaskData]:
+    async def _dequeue_next_task(self, project_id: UUID) -> Optional[TaskData]:
         """Dequeue next available task."""
         for task_type in self.task_types:
             try:
@@ -151,6 +155,7 @@ class QueueWorker:
                 task_data = await queue_manager.dequeue_task(
                     task_type=task_type,
                     worker_id=self.worker_id,
+                    project_id=project_id,
                     timeout_seconds=max(
                         1, int(self.poll_interval)
                     ),  # Ensure minimum 1s timeout
@@ -177,12 +182,13 @@ class QueueWorker:
                 async with self._task_semaphore:
                     await self._execute_task(task_data)
                     self._stats["tasks_completed"] += 1
+                    span.set_status(Status(StatusCode.OK, f"Task {task_id} completed successfully"))
 
             except Exception as e:
                 logger.error(f"Task {task_id} failed in worker {self.worker_id}: {e}")
                 await self._handle_task_failure(task_data, str(e))
                 self._stats["tasks_failed"] += 1
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.set_status(Status(StatusCode.ERROR, f"Task {task_id} failed: {str(e)}"))
 
             finally:
                 self._current_tasks.discard(task_id)
@@ -202,7 +208,7 @@ class QueueWorker:
 
             # Mark task as completed
             await queue_manager.complete_task(
-                task_id=task_data.task_id, result=result, worker_id=self.worker_id
+                task_id=task_data.task_id, project_id=task_data.project_id, result=result, worker_id=self.worker_id
             )
 
             logger.debug(f"Task {task_data.task_id} completed successfully")
@@ -217,7 +223,7 @@ class QueueWorker:
         """Handle task failure with retry logic."""
         try:
             # Check if we should retry
-            task_status = await queue_manager.get_task_status(task_data.task_id)
+            task_status = await queue_manager.get_task_status(task_data.task_id, task_data.project_id)
             current_attempts = task_status.get("attempts", 0) if task_status else 0
 
             if current_attempts < task_data.max_attempts:
@@ -225,6 +231,7 @@ class QueueWorker:
                 await queue_manager.fail_task(
                     task_id=task_data.task_id,
                     error=error,
+                    project_id=task_data.project_id,
                     worker_id=self.worker_id,
                     retry=True,
                 )
@@ -242,6 +249,7 @@ class QueueWorker:
                 await queue_manager.fail_task(
                     task_id=task_data.task_id,
                     error=error,
+                    project_id=task_data.project_id,
                     worker_id=self.worker_id,
                     retry=False,
                 )
@@ -294,6 +302,7 @@ class WorkerPool:
         self,
         pool_name: str,
         task_handlers: Dict[TaskType, Callable],
+        project_id: UUID,
         workers_per_type: int = 2,
         max_concurrent_per_worker: int = 5,
     ):
@@ -303,11 +312,13 @@ class WorkerPool:
         Args:
             pool_name: Pool identifier
             task_handlers: Mapping of task type to handler function
+            project_id: Project ID for task isolation (required)
             workers_per_type: Number of workers per task type
             max_concurrent_per_worker: Max concurrent tasks per worker
         """
         self.pool_name = pool_name
         self.task_handlers = task_handlers
+        self.project_id = project_id
         self.workers_per_type = workers_per_type
         self.max_concurrent_per_worker = max_concurrent_per_worker
 
@@ -332,6 +343,7 @@ class WorkerPool:
                     worker_id=worker_id,
                     task_types=[task_type],
                     task_handlers={task_type: handler},
+                    project_id=self.project_id,
                     max_concurrent_tasks=self.max_concurrent_per_worker,
                 )
                 self._workers.append(worker)

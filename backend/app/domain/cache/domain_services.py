@@ -27,6 +27,7 @@ from ..cache.repository_interfaces import (
     CacheHealthRepository,
 )
 from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -77,7 +78,7 @@ class CacheInvalidationService:
                 # Invalidate by project tag
                 project_tag = CacheTag.project(project_id)
                 invalidated_count += await self.project_cache_repo.invalidate_by_tag(
-                    project_tag
+                    project_tag, project_id
                 )
 
                 # TODO: Invalidate user sessions for this project
@@ -107,20 +108,21 @@ class CacheInvalidationService:
                 return invalidated_count
 
             except Exception as e:
-                logger.error(
+                logger.exception(
                     f"Failed to invalidate caches for project {project_id}: {e}"
                 )
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
     async def invalidate_by_tags(
-        self, tags: List[CacheTag], reason: str = "tag_invalidation"
+        self, tags: List[CacheTag], project_id: UUID, reason: str = "tag_invalidation"
     ) -> int:
         """
         Invalidate caches by multiple tags.
 
         Args:
             tags: List of cache tags to invalidate
+            project_id: Project ID for isolation (REQUIRED)
             reason: Reason for invalidation
 
         Returns:
@@ -128,13 +130,16 @@ class CacheInvalidationService:
         """
         with tracer.start_as_current_span("cache.invalidate_by_tags") as span:
             span.set_attribute("tag_count", len(tags))
+            span.set_attribute("project_id", str(project_id))
             span.set_attribute("reason", reason)
 
             invalidated_count = 0
 
             try:
                 for tag in tags:
-                    count = await self.project_cache_repo.invalidate_by_tag(tag)
+                    count = await self.project_cache_repo.invalidate_by_tag(
+                        tag, project_id
+                    )
                     invalidated_count += count
 
                 span.set_attribute("invalidated_count", invalidated_count)
@@ -142,6 +147,7 @@ class CacheInvalidationService:
                     f"Invalidated {invalidated_count} cache entries by tags",
                     extra={
                         "tags": [str(tag) for tag in tags],
+                        "project_id": str(project_id),
                         "count": invalidated_count,
                     },
                 )
@@ -149,21 +155,25 @@ class CacheInvalidationService:
                 return invalidated_count
 
             except Exception as e:
-                logger.error(f"Failed to invalidate caches by tags: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                logger.exception(f"Failed to invalidate caches by tags: {e}")
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
-    async def cleanup_expired_entries(self, max_age_hours: int = 24) -> Dict[str, int]:
+    async def cleanup_expired_entries(
+        self, project_id: UUID, max_age_hours: int = 24
+    ) -> Dict[str, int]:
         """
         Clean up expired cache entries.
 
         Args:
+            project_id: Project ID for isolation (REQUIRED)
             max_age_hours: Maximum age for cleanup
 
         Returns:
             Dictionary with cleanup counts by type
         """
         with tracer.start_as_current_span("cache.cleanup_expired") as span:
+            span.set_attribute("project_id", str(project_id))
             span.set_attribute("max_age_hours", max_age_hours)
 
             cleanup_counts = {
@@ -174,24 +184,23 @@ class CacheInvalidationService:
 
             try:
                 # Clean up expired project caches
-                expired_caches = await self.project_cache_repo.find_expired()
+                expired_caches = await self.project_cache_repo.find_expired(project_id)
                 for cache in expired_caches:
                     await self.project_cache_repo.delete(
-                        cache.get_key(), cache.project_id
+                        cache.get_key(), project_id
                     )
                     cleanup_counts["project_caches"] += 1
 
-                # Clean up expired user sessions - use default project_id for system-wide cleanup
-                default_project_id = UUID("12345678-1234-5678-9abc-123456789abc")
+                # Clean up expired user sessions
                 cleanup_counts[
                     "user_sessions"
-                ] = await self.user_session_repo.cleanup_expired(default_project_id)
+                ] = await self.user_session_repo.cleanup_expired(project_id)
 
                 # Clean up expired progress trackers
                 cleanup_counts[
                     "progress_trackers"
                 ] = await self.progress_repo.cleanup_expired(
-                    default_project_id, max_age_hours
+                    project_id, max_age_hours
                 )
 
                 total_cleaned = sum(cleanup_counts.values())
@@ -208,8 +217,8 @@ class CacheInvalidationService:
                 return cleanup_counts
 
             except Exception as e:
-                logger.error(f"Failed to cleanup expired cache entries: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                logger.exception(f"Failed to cleanup expired cache entries: {e}")
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
 
@@ -232,6 +241,7 @@ class SessionManagementService:
 
     async def create_session(
         self,
+        project_id: UUID,
         user_id: UUID,
         user_data: Dict[str, Any],
         project_access: Optional[List[UUID]] = None,
@@ -241,6 +251,7 @@ class SessionManagementService:
         Create new user session.
 
         Args:
+            project_id: Project ID for isolation (REQUIRED)
             user_id: User ID
             user_data: User session data
             project_access: List of projects user can access
@@ -250,15 +261,14 @@ class SessionManagementService:
             Created session entity
         """
         with tracer.start_as_current_span("session.create") as span:
+            span.set_attribute("project_id", str(project_id))
             span.set_attribute("user_id", str(user_id))
             span.set_attribute("project_count", len(project_access or []))
 
             try:
                 # Invalidate existing sessions for user (single session policy)
-                # Use default project_id for user-specific operations
-                default_project_id = UUID("12345678-1234-5678-9abc-123456789abc")
                 await self.session_repo.invalidate_all_for_user(
-                    user_id, default_project_id
+                    user_id, project_id
                 )
 
                 # Create new session
@@ -269,13 +279,14 @@ class SessionManagementService:
                     ttl=ttl or self.default_ttl,
                 )
 
-                # Save session - use project_id from session for isolation
-                await self.session_repo.save(session, session.project_id)
+                # Save session with explicit project_id for isolation
+                await self.session_repo.save(session, project_id)
 
                 span.set_attribute("session_id", str(session.session_id))
                 logger.info(
                     f"Created new session for user {user_id}",
                     extra={
+                        "project_id": str(project_id),
                         "user_id": str(user_id),
                         "session_id": str(session.session_id),
                         "project_count": len(session.project_access),
@@ -285,60 +296,77 @@ class SessionManagementService:
                 return session
 
             except Exception as e:
-                logger.error(f"Failed to create session for user {user_id}: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                logger.exception(f"Failed to create session for user {user_id}: {e}")
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
-    async def validate_session(self, session_id: UUID) -> Optional[UserSession]:
+    async def validate_session(
+        self, session_id: UUID, project_id: UUID
+    ) -> Optional[UserSession]:
         """
         Validate and update session.
 
         Args:
             session_id: Session ID to validate
+            project_id: Project ID for isolation (REQUIRED)
 
         Returns:
             Valid session or None if invalid
         """
         with tracer.start_as_current_span("session.validate") as span:
             span.set_attribute("session_id", str(session_id))
+            span.set_attribute("project_id", str(project_id))
 
             try:
-                # Need project_id to find session - use default for validation
-                default_project_id = UUID("12345678-1234-5678-9abc-123456789abc")
                 session = await self.session_repo.find_by_session_id(
-                    session_id, default_project_id
+                    session_id, project_id
                 )
 
                 if not session:
-                    logger.warning(f"Session not found: {session_id}")
+                    logger.warning(
+                        f"Session not found: {session_id}",
+                        extra={
+                            "session_id": str(session_id),
+                            "project_id": str(project_id),
+                        },
+                    )
                     return None
 
                 if not session.is_valid():
-                    logger.warning(f"Session invalid: {session_id}")
+                    logger.warning(
+                        f"Session invalid: {session_id}",
+                        extra={
+                            "session_id": str(session_id),
+                            "project_id": str(project_id),
+                        },
+                    )
                     # Clean up invalid session
-                    await self.session_repo.delete(session_id, default_project_id)
+                    await self.session_repo.delete(session_id, project_id)
                     return None
 
                 # Update activity and extend TTL
                 session.update_activity()
                 session.extend_session(self.default_ttl)
-                await self.session_repo.save(session, session.project_id)
+                await self.session_repo.save(session, project_id)
 
                 span.set_attribute("user_id", str(session.user_id))
 
                 return session
 
             except Exception as e:
-                logger.error(f"Failed to validate session {session_id}: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                logger.exception(f"Failed to validate session {session_id}: {e}")
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
-    async def revoke_session(self, session_id: UUID, reason: str = "logout") -> bool:
+    async def revoke_session(
+        self, session_id: UUID, project_id: UUID, reason: str = "logout"
+    ) -> bool:
         """
         Revoke user session.
 
         Args:
             session_id: Session ID to revoke
+            project_id: Project ID for isolation (REQUIRED)
             reason: Reason for revocation
 
         Returns:
@@ -346,22 +374,26 @@ class SessionManagementService:
         """
         with tracer.start_as_current_span("session.revoke") as span:
             span.set_attribute("session_id", str(session_id))
+            span.set_attribute("project_id", str(project_id))
             span.set_attribute("reason", reason)
 
             try:
-                session = await self.session_repo.find_by_session_id(session_id)
+                session = await self.session_repo.find_by_session_id(
+                    session_id, project_id
+                )
 
                 if not session:
                     return False
 
                 session.invalidate()
-                await self.session_repo.save(session)
+                await self.session_repo.save(session, project_id)
 
                 logger.info(
                     f"Revoked session {session_id} for user {session.user_id}",
                     extra={
                         "session_id": str(session_id),
                         "user_id": str(session.user_id),
+                        "project_id": str(project_id),
                         "reason": reason,
                     },
                 )
@@ -369,18 +401,19 @@ class SessionManagementService:
                 return True
 
             except Exception as e:
-                logger.error(f"Failed to revoke session {session_id}: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                logger.exception(f"Failed to revoke session {session_id}: {e}")
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
     async def revoke_all_user_sessions(
-        self, user_id: UUID, reason: str = "security"
+        self, user_id: UUID, project_id: UUID, reason: str = "security"
     ) -> int:
         """
         Revoke all sessions for a user.
 
         Args:
             user_id: User ID
+            project_id: Project ID for isolation (REQUIRED)
             reason: Reason for revocation
 
         Returns:
@@ -388,64 +421,79 @@ class SessionManagementService:
         """
         with tracer.start_as_current_span("session.revoke_all_user") as span:
             span.set_attribute("user_id", str(user_id))
+            span.set_attribute("project_id", str(project_id))
             span.set_attribute("reason", reason)
 
             try:
-                count = await self.session_repo.invalidate_all_for_user(user_id)
+                count = await self.session_repo.invalidate_all_for_user(
+                    user_id, project_id
+                )
 
                 logger.info(
                     f"Revoked {count} sessions for user {user_id}",
-                    extra={"user_id": str(user_id), "count": count, "reason": reason},
+                    extra={
+                        "user_id": str(user_id),
+                        "project_id": str(project_id),
+                        "count": count,
+                        "reason": reason,
+                    },
                 )
 
                 span.set_attribute("revoked_count", count)
                 return count
 
             except Exception as e:
-                logger.error(f"Failed to revoke all sessions for user {user_id}: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                logger.exception(f"Failed to revoke all sessions for user {user_id}: {e}")
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
-    async def grant_project_access(self, session_id: UUID, project_id: UUID) -> bool:
+    async def grant_project_access(
+        self, session_id: UUID, session_project_id: UUID, target_project_id: UUID
+    ) -> bool:
         """
         Grant project access to session.
 
         Args:
             session_id: Session ID
-            project_id: Project ID to grant access to
+            session_project_id: Project ID for session isolation (REQUIRED)
+            target_project_id: Project ID to grant access to
 
         Returns:
             True if access was granted
         """
         with tracer.start_as_current_span("session.grant_project_access") as span:
             span.set_attribute("session_id", str(session_id))
-            span.set_attribute("project_id", str(project_id))
+            span.set_attribute("session_project_id", str(session_project_id))
+            span.set_attribute("target_project_id", str(target_project_id))
 
             try:
-                session = await self.session_repo.find_by_session_id(session_id)
+                session = await self.session_repo.find_by_session_id(
+                    session_id, session_project_id
+                )
 
                 if not session or not session.is_valid():
                     return False
 
-                session.grant_project_access(project_id)
-                await self.session_repo.save(session)
+                session.grant_project_access(target_project_id)
+                await self.session_repo.save(session, session_project_id)
 
                 logger.info(
                     f"Granted project access to session {session_id}",
                     extra={
                         "session_id": str(session_id),
                         "user_id": str(session.user_id),
-                        "project_id": str(project_id),
+                        "session_project_id": str(session_project_id),
+                        "target_project_id": str(target_project_id),
                     },
                 )
 
                 return True
 
             except Exception as e:
-                logger.error(
+                logger.exception(
                     f"Failed to grant project access to session {session_id}: {e}"
                 )
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
 
@@ -464,7 +512,7 @@ class RateLimitingService:
         identifier: str,
         limit_type: str,
         config: RateLimitConfig,
-        project_id: UUID = None,
+        project_id: UUID,
     ) -> Dict[str, Any]:
         """
         Check rate limit for identifier.
@@ -473,7 +521,7 @@ class RateLimitingService:
             identifier: Rate limit identifier (user ID, IP, etc.)
             limit_type: Type of rate limit (user, project, ip)
             config: Rate limit configuration
-            project_id: Project ID for isolation
+            project_id: Project ID for isolation (REQUIRED)
 
         Returns:
             Rate limit check result
@@ -483,37 +531,31 @@ class RateLimitingService:
             span.set_attribute("limit_type", limit_type)
             span.set_attribute("limit", config.requests_per_window)
             span.set_attribute("window", config.window_seconds)
-            if project_id:
-                span.set_attribute("project_id", str(project_id))
+            span.set_attribute("project_id", str(project_id))
 
             try:
-                # Use default project_id if not provided
-                default_project_id = project_id or UUID(
-                    "12345678-1234-5678-9abc-123456789abc"
-                )
-
                 # Check and increment rate limit
                 allowed = await self.rate_limit_repo.check_and_increment(
                     identifier=identifier,
                     limit_type=limit_type,
                     window=config.window,
                     limit=config.requests_per_window,
-                    project_id=default_project_id,
+                    project_id=project_id,
                 )
 
                 # Get current state
                 current_count = await self.rate_limit_repo.get_current_count(
-                    identifier, limit_type, config.window, default_project_id
+                    identifier, limit_type, config.window, project_id
                 )
                 remaining = await self.rate_limit_repo.get_remaining_requests(
                     identifier,
                     limit_type,
                     config.window,
                     config.requests_per_window,
-                    default_project_id,
+                    project_id,
                 )
                 reset_time = await self.rate_limit_repo.get_reset_time(
-                    identifier, limit_type, config.window, default_project_id
+                    identifier, limit_type, config.window, project_id
                 )
                 reset_seconds = 0
 
@@ -532,6 +574,7 @@ class RateLimitingService:
                     "window": config.window_seconds,
                     "identifier": identifier,
                     "limit_type": limit_type,
+                    "project_id": str(project_id),
                 }
 
                 span.set_attribute("allowed", allowed)
@@ -547,12 +590,16 @@ class RateLimitingService:
                 return result
 
             except Exception as e:
-                logger.error(f"Failed to check rate limit for {identifier}: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                logger.exception(f"Failed to check rate limit for {identifier}: {e}")
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
     async def reset_rate_limit(
-        self, identifier: str, limit_type: str, window: RateLimitWindow
+        self,
+        identifier: str,
+        limit_type: str,
+        window: RateLimitWindow,
+        project_id: UUID,
     ) -> bool:
         """
         Reset rate limit for identifier.
@@ -561,6 +608,7 @@ class RateLimitingService:
             identifier: Rate limit identifier
             limit_type: Type of rate limit
             window: Time window
+            project_id: Project ID for isolation (REQUIRED)
 
         Returns:
             True if rate limit was reset
@@ -569,10 +617,11 @@ class RateLimitingService:
             span.set_attribute("identifier", identifier)
             span.set_attribute("limit_type", limit_type)
             span.set_attribute("window", window.value)
+            span.set_attribute("project_id", str(project_id))
 
             try:
                 success = await self.rate_limit_repo.reset_window(
-                    identifier, limit_type, window
+                    identifier, limit_type, window, project_id
                 )
 
                 if success:
@@ -582,6 +631,7 @@ class RateLimitingService:
                             "identifier": identifier,
                             "limit_type": limit_type,
                             "window": window.value,
+                            "project_id": str(project_id),
                         },
                     )
 
@@ -589,12 +639,17 @@ class RateLimitingService:
                 return success
 
             except Exception as e:
-                logger.error(f"Failed to reset rate limit for {identifier}: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                logger.exception(f"Failed to reset rate limit for {identifier}: {e}")
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
     async def get_rate_limit_status(
-        self, identifier: str, limit_type: str, window: RateLimitWindow, limit: int
+        self,
+        identifier: str,
+        limit_type: str,
+        window: RateLimitWindow,
+        limit: int,
+        project_id: UUID,
     ) -> Dict[str, Any]:
         """
         Get current rate limit status without incrementing.
@@ -604,6 +659,7 @@ class RateLimitingService:
             limit_type: Type of rate limit
             window: Time window
             limit: Rate limit threshold
+            project_id: Project ID for isolation (REQUIRED)
 
         Returns:
             Current rate limit status
@@ -612,16 +668,17 @@ class RateLimitingService:
             span.set_attribute("identifier", identifier)
             span.set_attribute("limit_type", limit_type)
             span.set_attribute("window", window.value)
+            span.set_attribute("project_id", str(project_id))
 
             try:
                 current_count = await self.rate_limit_repo.get_current_count(
-                    identifier, limit_type, window
+                    identifier, limit_type, window, project_id
                 )
                 remaining = await self.rate_limit_repo.get_remaining_requests(
-                    identifier, limit_type, window, limit
+                    identifier, limit_type, window, limit, project_id
                 )
                 reset_time = await self.rate_limit_repo.get_reset_time(
-                    identifier, limit_type, window
+                    identifier, limit_type, window, project_id
                 )
                 reset_seconds = 0
 
@@ -640,6 +697,7 @@ class RateLimitingService:
                     "identifier": identifier,
                     "limit_type": limit_type,
                     "allowed": current_count < limit,
+                    "project_id": str(project_id),
                 }
 
                 span.set_attribute("current_count", current_count)
@@ -649,8 +707,8 @@ class RateLimitingService:
                 return status
 
             except Exception as e:
-                logger.error(f"Failed to get rate limit status for {identifier}: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                logger.exception(f"Failed to get rate limit status for {identifier}: {e}")
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
 
@@ -664,21 +722,30 @@ class CacheHealthService:
     def __init__(self, health_repo: CacheHealthRepository):
         self.health_repo = health_repo
 
-    async def perform_comprehensive_health_check(self) -> Dict[str, Any]:
+    async def perform_comprehensive_health_check(
+        self, project_id: UUID
+    ) -> Dict[str, Any]:
         """
         Perform comprehensive cache health check.
+
+        Args:
+            project_id: Project ID for isolation (REQUIRED)
 
         Returns:
             Detailed health status
         """
         with tracer.start_as_current_span("cache.health_check") as span:
+            span.set_attribute("project_id", str(project_id))
+
             try:
                 # Get individual health components
-                memory_usage = await self.health_repo.get_memory_usage()
-                connection_info = await self.health_repo.get_connection_info()
-                operation_stats = await self.health_repo.get_operation_stats()
-                basic_health = await self.health_repo.perform_health_check()
-                key_distribution = await self.health_repo.get_key_distribution()
+                memory_usage = await self.health_repo.get_memory_usage(project_id)
+                connection_info = await self.health_repo.get_connection_info(project_id)
+                operation_stats = await self.health_repo.get_operation_stats(project_id)
+                basic_health = await self.health_repo.perform_health_check(project_id)
+                key_distribution = await self.health_repo.get_key_distribution(
+                    project_id
+                )
 
                 # Determine overall health status
                 overall_status = "healthy"
@@ -708,6 +775,7 @@ class CacheHealthService:
                     "status": overall_status,
                     "timestamp": datetime.utcnow().isoformat(),
                     "service": "cache",
+                    "project_id": str(project_id),
                     "issues": issues,
                     "memory": memory_usage,
                     "connections": connection_info,
@@ -722,48 +790,61 @@ class CacheHealthService:
                 if overall_status != "healthy":
                     logger.warning(
                         f"Cache health check returned {overall_status}",
-                        extra={"status": overall_status, "issues": issues},
+                        extra={
+                            "status": overall_status,
+                            "issues": issues,
+                            "project_id": str(project_id),
+                        },
                     )
 
                 return health_status
 
             except Exception as e:
-                logger.error(f"Failed to perform cache health check: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                logger.exception(f"Failed to perform cache health check: {e}")
+                span.set_status(Status(StatusCode.ERROR, str(e)))
 
                 return {
                     "status": "unhealthy",
                     "timestamp": datetime.utcnow().isoformat(),
                     "service": "cache",
+                    "project_id": str(project_id),
                     "error": str(e),
                 }
 
-    async def get_performance_metrics(self) -> Dict[str, Any]:
+    async def get_performance_metrics(self, project_id: UUID) -> Dict[str, Any]:
         """
         Get performance metrics for cache operations.
+
+        Args:
+            project_id: Project ID for isolation (REQUIRED)
 
         Returns:
             Performance metrics
         """
         with tracer.start_as_current_span("cache.performance_metrics") as span:
+            span.set_attribute("project_id", str(project_id))
+
             try:
                 # Get slow operations
                 slow_operations = await self.health_repo.get_slow_operations(
-                    threshold_ms=100.0
+                    project_id, threshold_ms=100.0
                 )
 
                 # Get operation statistics
-                operation_stats = await self.health_repo.get_operation_stats()
+                operation_stats = await self.health_repo.get_operation_stats(project_id)
 
                 # Get memory usage
-                memory_usage = await self.health_repo.get_memory_usage()
+                memory_usage = await self.health_repo.get_memory_usage(project_id)
 
                 # Get key distribution
-                key_distribution = await self.health_repo.get_key_distribution()
+                key_distribution = await self.health_repo.get_key_distribution(
+                    project_id
+                )
 
                 # Calculate performance metrics
                 metrics = {
                     "timestamp": datetime.utcnow().isoformat(),
+                    "project_id": str(project_id),
                     "slow_operations": {
                         "count": len(slow_operations),
                         "operations": slow_operations[:10],  # Top 10 slowest
@@ -789,6 +870,6 @@ class CacheHealthService:
                 return metrics
 
             except Exception as e:
-                logger.error(f"Failed to get cache performance metrics: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                logger.exception(f"Failed to get cache performance metrics: {e}")
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise

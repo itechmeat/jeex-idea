@@ -513,11 +513,13 @@ class TestProgress:
     def test_progress_creation(self):
         """Test progress creation."""
         correlation_id = uuid4()
+        project_id = uuid4()
         total_steps = 5
 
-        progress = Progress.create(correlation_id, total_steps)
+        progress = Progress.create(correlation_id, total_steps, project_id)
 
         assert progress.correlation_id == correlation_id
+        assert progress.project_id == project_id
         assert progress.total_steps == total_steps
         assert progress.current_step == 0
         assert progress.is_active() is True
@@ -528,14 +530,16 @@ class TestProgress:
     def test_progress_invalid_steps(self):
         """Test progress with invalid steps."""
         correlation_id = uuid4()
+        project_id = uuid4()
 
         with pytest.raises(ValueError, match="Total steps must be positive"):
-            Progress.create(correlation_id, 0)
+            Progress.create(correlation_id, 0, project_id)
 
     def test_progress_step_update(self):
         """Test progress step update."""
         correlation_id = uuid4()
-        progress = Progress.create(correlation_id, 5)
+        project_id = uuid4()
+        progress = Progress.create(correlation_id, 5, project_id)
 
         progress.update_step(2, "Processing step 2")
 
@@ -547,7 +551,8 @@ class TestProgress:
     def test_progress_increment_step(self):
         """Test progress increment step."""
         correlation_id = uuid4()
-        progress = Progress.create(correlation_id, 3)
+        project_id = uuid4()
+        progress = Progress.create(correlation_id, 3, project_id)
 
         progress.increment_step("Step 1")
         progress.increment_step("Step 2")
@@ -559,7 +564,8 @@ class TestProgress:
     def test_progress_completion(self):
         """Test progress completion."""
         correlation_id = uuid4()
-        progress = Progress.create(correlation_id, 3)
+        project_id = uuid4()
+        progress = Progress.create(correlation_id, 3, project_id)
 
         progress.increment_step("Step 1")
         progress.increment_step("Step 2")
@@ -574,7 +580,8 @@ class TestProgress:
     def test_progress_failure(self):
         """Test progress failure."""
         correlation_id = uuid4()
-        progress = Progress.create(correlation_id, 3)
+        project_id = uuid4()
+        progress = Progress.create(correlation_id, 3, project_id)
 
         progress.fail("Something went wrong")
 
@@ -585,7 +592,8 @@ class TestProgress:
     def test_progress_key(self):
         """Test progress key generation."""
         correlation_id = uuid4()
-        progress = Progress.create(correlation_id, 3)
+        project_id = uuid4()
+        progress = Progress.create(correlation_id, 3, project_id)
         key = progress.get_key()
 
         assert isinstance(key, CacheKey)

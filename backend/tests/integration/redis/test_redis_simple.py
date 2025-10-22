@@ -15,8 +15,15 @@ from uuid import uuid4
 
 # Set environment
 os.environ["ENVIRONMENT"] = "development"
-os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only-change-in-production"
-os.environ["REDIS_PASSWORD"] = "jeex_redis_secure_password_change_in_production"
+
+# Require secrets from environment
+if "SECRET_KEY" not in os.environ:
+    print("❌ SECRET_KEY environment variable is required for testing")
+    sys.exit(1)
+
+if "REDIS_PASSWORD" not in os.environ:
+    print("❌ REDIS_PASSWORD environment variable is required for testing")
+    sys.exit(1)
 
 try:
     import redis.asyncio as redis
@@ -45,7 +52,7 @@ class SimpleRedisValidator:
             redis_client = redis.Redis(
                 host="localhost",
                 port=5240,
-                password="jeex_redis_secure_password_change_in_production",
+                password=os.environ["REDIS_PASSWORD"],
                 decode_responses=True,
             )
 

@@ -270,7 +270,7 @@ class RedisRateLimitRepository(RateLimitRepositoryABC):
             identifier: Unique identifier for rate limiting
             config: Rate limit configuration
             cost: Request cost
-            project_id: Optional project ID for isolation
+            project_id: Project ID for isolation (REQUIRED)
 
         Returns:
             Rate limit check result
@@ -280,13 +280,15 @@ class RedisRateLimitRepository(RateLimitRepositoryABC):
             raise ValueError("identifier cannot be empty or whitespace")
         if cost <= 0:
             raise ValueError("cost must be positive")
+        if project_id is None:
+            raise ValueError("project_id is required for rate limiting")
 
         try:
             key = f"rate_limit:sliding:{identifier}:{config.window_seconds}"
             now = int(time.time())
 
             async with self._redis_factory.get_connection(
-                str(project_id) if project_id else None
+                str(project_id)
             ) as redis_client:
                 try:
                     result = await redis_client.evalsha(
@@ -377,7 +379,7 @@ class RedisRateLimitRepository(RateLimitRepositoryABC):
             capacity: Bucket capacity
             refill_rate: Tokens per second refill rate
             cost: Request cost
-            project_id: Optional project ID for isolation
+            project_id: Project ID for isolation (REQUIRED)
 
         Returns:
             Rate limit check result
@@ -389,13 +391,15 @@ class RedisRateLimitRepository(RateLimitRepositoryABC):
             raise ValueError("capacity must be >= 1")
         if refill_rate <= 0:
             raise ValueError("refill_rate must be positive")
+        if project_id is None:
+            raise ValueError("project_id is required for rate limiting")
 
         try:
-            key = f"rate_limit:token_bucket:{identifier}"
+            key = f"rate_limit:token_bucket:{identifier}:{project_id}"
             now = int(time.time())
 
             async with self._redis_factory.get_connection(
-                str(project_id) if project_id else None
+                str(project_id)
             ) as redis_client:
                 try:
                     result = await redis_client.evalsha(
@@ -515,20 +519,23 @@ class RedisRateLimitRepository(RateLimitRepositoryABC):
         Args:
             identifier: Unique identifier
             window_seconds: Time window in seconds
-            project_id: Optional project ID for isolation
+            project_id: Project ID for isolation (REQUIRED)
 
         Returns:
             True if reset successful
         """
+        if project_id is None:
+            raise ValueError("project_id is required for rate limiting")
+
         try:
-            key = f"rate_limit:sliding:{identifier}:{window_seconds}"
+            key = f"rate_limit:sliding:{identifier}:{window_seconds}:{project_id}"
 
             async with self._redis_factory.get_connection(
-                str(project_id) if project_id else None
+                str(project_id)
             ) as redis_client:
                 await redis_client.delete(key)
 
-            logger.debug(f"Reset rate limit for {identifier}")
+            logger.debug(f"Reset rate limit for {identifier} in project {project_id}")
             return True
 
         except Exception as e:
@@ -681,7 +688,9 @@ class RedisRateLimitRepository(RateLimitRepositoryABC):
     ) -> bool:
         """Check if request is allowed and increment count."""
         try:
-            key = f"rate_limit:{limit_type}:{identifier}:{window.value}"
+            # Convert window.value (e.g., "60s") to integer seconds
+            window_seconds = int(window.value.rstrip("s"))
+            key = f"rate_limit:{limit_type}:{identifier}:{window_seconds}"
             now = int(time.time())
 
             async with self._redis_factory.get_connection(
@@ -692,7 +701,7 @@ class RedisRateLimitRepository(RateLimitRepositoryABC):
                         self._lua_scripts["sliding_window"],
                         1,  # number of keys
                         key,
-                        window.value,
+                        window_seconds,
                         now,
                         1,  # cost = 1
                         limit,
@@ -704,7 +713,7 @@ class RedisRateLimitRepository(RateLimitRepositoryABC):
                             SLIDING_WINDOW_LUA,
                             1,  # number of keys
                             key,
-                            window.value,
+                            window_seconds,
                             now,
                             1,  # cost = 1
                             limit,
@@ -731,9 +740,11 @@ class RedisRateLimitRepository(RateLimitRepositoryABC):
     ) -> int:
         """Get current request count within project scope."""
         try:
-            key = f"rate_limit:{limit_type}:{identifier}:{window.value}"
+            # Convert window.value (e.g., "60s") to integer seconds
+            window_seconds = int(window.value.rstrip("s"))
+            key = f"rate_limit:{limit_type}:{identifier}:{window_seconds}"
             now = int(time.time())
-            window_start = now - window.value
+            window_start = now - window_seconds
 
             async with self._redis_factory.get_connection(
                 str(project_id)
@@ -774,7 +785,9 @@ class RedisRateLimitRepository(RateLimitRepositoryABC):
     ) -> Optional[datetime]:
         """Get window reset time within project scope."""
         try:
-            key = f"rate_limit:{limit_type}:{identifier}:{window.value}"
+            # Convert window.value (e.g., "60s") to integer seconds
+            window_seconds = int(window.value.rstrip("s"))
+            key = f"rate_limit:{limit_type}:{identifier}:{window_seconds}"
 
             async with self._redis_factory.get_connection(
                 str(project_id)
@@ -782,7 +795,7 @@ class RedisRateLimitRepository(RateLimitRepositoryABC):
                 oldest = await redis_client.zrange(key, 0, 0, withscores=True)
                 if oldest and oldest[0]:
                     oldest_time = int(oldest[0][1])
-                    reset_time = datetime.fromtimestamp(oldest_time + window.value)
+                    reset_time = datetime.fromtimestamp(oldest_time + window_seconds)
                     return reset_time
 
                 return None
@@ -800,7 +813,9 @@ class RedisRateLimitRepository(RateLimitRepositoryABC):
     ) -> bool:
         """Reset rate limit window within project scope."""
         try:
-            key = f"rate_limit:{limit_type}:{identifier}:{window.value}"
+            # Convert window.value (e.g., "60s") to integer seconds
+            window_seconds = int(window.value.rstrip("s"))
+            key = f"rate_limit:{limit_type}:{identifier}:{window_seconds}"
 
             async with self._redis_factory.get_connection(
                 str(project_id)

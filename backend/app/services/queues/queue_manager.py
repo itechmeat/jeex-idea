@@ -11,7 +11,7 @@ import logging
 import time
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Dict, Any, Optional, List, Union, Callable
+from typing import Dict, Any, List, Union, Callable, Optional
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, field_validator
@@ -411,7 +411,7 @@ class QueueManager:
         self,
         task_type: TaskType,
         worker_id: str,
-        project_id: Optional[UUID] = None,
+        project_id: UUID,
         timeout_seconds: int = 30,
     ) -> Optional[TaskData]:
         """
@@ -420,7 +420,7 @@ class QueueManager:
         Args:
             task_type: Type of task to dequeue
             worker_id: Worker ID for task assignment
-            project_id: Optional project ID for project-specific tasks
+            project_id: Project ID for project-specific tasks (required)
             timeout_seconds: Timeout for blocking dequeue
 
         Returns:
@@ -428,7 +428,11 @@ class QueueManager:
 
         Raises:
             RedisException: If dequeue fails
+            ValueError: If project_id is not provided
         """
+        if not project_id:
+            raise ValueError("project_id is required for task dequeue")
+
         await self.initialize()
 
         queue_config = self.QUEUES.get(task_type)
@@ -438,8 +442,7 @@ class QueueManager:
         with tracer.start_as_current_span("queue_manager.dequeue") as span:
             span.set_attribute("task_type", task_type.value)
             span.set_attribute("worker_id", worker_id)
-            if project_id:
-                span.set_attribute("project_id", str(project_id))
+            span.set_attribute("project_id", str(project_id))
 
             try:
                 # Import repository here to avoid circular imports
@@ -449,33 +452,15 @@ class QueueManager:
 
                 queue_name = queue_config["name"]
 
-                # CRITICAL FIX: Pass timeout_seconds to repository for proper blocking behavior
-                # If project_id specified, try project-specific dequeue first
-                if project_id:
-                    task_data = await queue_repository.dequeue_task(
-                        task_type, worker_id, project_id, timeout_seconds
-                    )
-                    if task_data:
-                        span.set_attribute("task_id", str(task_data.task_id))
-                        span.set_attribute("project_id", str(task_data.project_id))
-                        span.set_attribute("queue_source", "project_specific")
-                        span.set_status(Status(StatusCode.OK))
-                        return task_data
-
-                # Fallback to general queue - use default project_id
-                default_project_id = (
-                    project_id
-                    or self._bootstrap_project_id
-                    or UUID("12345678-1234-5678-9abc-123456789abc")
-                )  # TODO: Extract from context
+                # Dequeue task for specific project
                 task_data = await queue_repository.dequeue_task(
-                    task_type, worker_id, default_project_id, timeout_seconds
+                    task_type, worker_id, project_id, timeout_seconds
                 )
 
                 if task_data:
                     span.set_attribute("task_id", str(task_data.task_id))
                     span.set_attribute("project_id", str(task_data.project_id))
-                    span.set_attribute("queue_source", "general")
+                    span.set_attribute("queue_source", "project_specific")
                     span.set_status(Status(StatusCode.OK))
                     return task_data
                 else:
@@ -512,6 +497,7 @@ class QueueManager:
     async def complete_task(
         self,
         task_id: UUID,
+        project_id: UUID,
         result: Optional[Dict[str, Any]] = None,
         worker_id: Optional[str] = None,
     ) -> bool:
@@ -520,20 +506,28 @@ class QueueManager:
 
         Args:
             task_id: Task ID to complete
+            project_id: Project ID for task isolation (required)
             result: Task execution result
             worker_id: Worker ID that completed the task
 
         Returns:
             True if task marked as completed
+
+        Raises:
+            ValueError: If project_id is not provided
         """
+        if not project_id:
+            raise ValueError("project_id is required to complete task")
+
         return await self._update_task_status(
-            task_id, TaskStatus.COMPLETED, result=result, worker_id=worker_id
+            task_id, TaskStatus.COMPLETED, project_id, result=result, worker_id=worker_id
         )
 
     async def fail_task(
         self,
         task_id: UUID,
         error: str,
+        project_id: UUID,
         worker_id: Optional[str] = None,
         retry: bool = True,
     ) -> bool:
@@ -543,37 +537,44 @@ class QueueManager:
         Args:
             task_id: Task ID that failed
             error: Error message
+            project_id: Project ID for task isolation (required)
             worker_id: Worker ID that failed the task
             retry: Whether to retry the task
 
         Returns:
             True if task status updated
+
+        Raises:
+            ValueError: If project_id is not provided
         """
+        if not project_id:
+            raise ValueError("project_id is required to fail task")
+
         # Get task data to check retry attempts
-        task_data = await self.get_task_data(task_id)
+        task_data = await self.get_task_data(task_id, project_id)
         if not task_data:
             return False
 
         # Check if we should retry
         if retry and task_data.max_attempts > 0:
-            status = await self.get_task_status(task_id)
+            status = await self.get_task_status(task_id, project_id)
             current_attempts = status.get("attempts", 0)
 
             if current_attempts < task_data.max_attempts:
                 # Requeue task with exponential backoff
-                await self._retry_task(task_id, current_attempts)
+                await self._retry_task(task_id, current_attempts, project_id)
                 return await self._update_task_status(
-                    task_id, TaskStatus.RETRYING, error=error, worker_id=worker_id
+                    task_id, TaskStatus.RETRYING, project_id, error=error, worker_id=worker_id
                 )
 
         # Mark as failed (no more retries)
         return await self._update_task_status(
-            task_id, TaskStatus.FAILED, error=error, worker_id=worker_id
+            task_id, TaskStatus.FAILED, project_id, error=error, worker_id=worker_id
         )
 
-    async def _retry_task(self, task_id: UUID, attempt: int) -> bool:
+    async def _retry_task(self, task_id: UUID, attempt: int, project_id: UUID) -> bool:
         """Retry task with exponential backoff."""
-        task_data = await self.get_task_data(task_id)
+        task_data = await self.get_task_data(task_id, project_id)
         if not task_data:
             return False
 
@@ -586,7 +587,7 @@ class QueueManager:
 
         return await self.enqueue_task(
             task_type=task_data.task_type,
-            project_id=task_data.project_id,
+            project_id=project_id,
             data=task_data.data,
             priority=new_priority,
             scheduled_at=scheduled_at,
@@ -595,43 +596,50 @@ class QueueManager:
             metadata={**task_data.metadata, "retry_attempt": attempt + 1},
         )
 
-    async def cancel_task(self, task_id: UUID) -> bool:
+    async def cancel_task(self, task_id: UUID, project_id: UUID) -> bool:
         """
         Cancel a queued or running task.
 
         Args:
             task_id: Task ID to cancel
+            project_id: Project ID for task isolation (required)
 
         Returns:
             True if task cancelled
-        """
-        return await self._update_task_status(task_id, TaskStatus.CANCELLED)
 
-    async def get_task_status(self, task_id: UUID) -> Optional[Dict[str, Any]]:
+        Raises:
+            ValueError: If project_id is not provided
+        """
+        if not project_id:
+            raise ValueError("project_id is required to cancel task")
+
+        return await self._update_task_status(task_id, TaskStatus.CANCELLED, project_id)
+
+    async def get_task_status(self, task_id: UUID, project_id: UUID) -> Optional[Dict[str, Any]]:
         """
         Get current task status.
 
         Args:
             task_id: Task ID to check
+            project_id: Project ID for task isolation (required)
 
         Returns:
             Task status information or None if not found
+
+        Raises:
+            ValueError: If project_id is not provided
         """
+        if not project_id:
+            raise ValueError("project_id is required to get task status")
+
         try:
             # Import repository here to avoid circular imports
             from app.infrastructure.repositories.queue_repository import (
                 queue_repository,
             )
 
-            # First get task data to extract project_id
-            task_data = await self.get_task_data(task_id)
-            if not task_data:
-                return None
-
             # Use repository method with project_id
-            status_data = await queue_repository.get_task_status(
-                task_id, task_data.project_id
-            )
+            status_data = await queue_repository.get_task_status(task_id, project_id)
 
             if status_data:
                 return {
@@ -650,30 +658,31 @@ class QueueManager:
             logger.error(f"Failed to get task status for {task_id}: {e}")
             return None
 
-    async def get_task_data(self, task_id: UUID) -> Optional[TaskData]:
+    async def get_task_data(self, task_id: UUID, project_id: UUID) -> Optional[TaskData]:
         """
         Get task data.
 
         Args:
             task_id: Task ID to retrieve
+            project_id: Project ID for task isolation (required)
 
         Returns:
             Task data or None if not found
+
+        Raises:
+            ValueError: If project_id is not provided
         """
+        if not project_id:
+            raise ValueError("project_id is required to get task data")
+
         try:
             # Import repository here to avoid circular imports
             from app.infrastructure.repositories.queue_repository import (
                 queue_repository,
             )
 
-            # Try to find project_id from known task associations
-            # For now, use a default project_id - TODO: Extract from context
-            default_project_id = self._bootstrap_project_id or UUID(
-                "12345678-1234-5678-9abc-123456789abc"
-            )
-
             # Use repository method with project_id
-            return await queue_repository.get_task_data(task_id, default_project_id)
+            return await queue_repository.get_task_data(task_id, project_id)
 
         except Exception as e:
             logger.error(f"Failed to get task data for {task_id}: {e}")
@@ -683,27 +692,25 @@ class QueueManager:
         self,
         task_id: UUID,
         status: TaskStatus,
+        project_id: UUID,
         result: Optional[Dict[str, Any]] = None,
         error: Optional[str] = None,
         worker_id: Optional[str] = None,
     ) -> bool:
         """Update task status atomically."""
+        if not project_id:
+            raise ValueError("project_id is required to update task status")
+
         try:
             # Import repository here to avoid circular imports
             from app.infrastructure.repositories.queue_repository import (
                 queue_repository,
             )
 
-            # Get task data to extract project_id
-            task_data = await self.get_task_data(task_id)
-            if not task_data:
-                logger.error(f"Cannot update status for unknown task {task_id}")
-                return False
-
             # Update status using repository
             success = await queue_repository.complete_task(
                 task_id=task_id,
-                project_id=task_data.project_id,
+                project_id=project_id,
                 status=status,
                 result=result,
                 error=error,
@@ -724,95 +731,93 @@ class QueueManager:
             return False
 
     async def get_queue_stats(
-        self, task_type: TaskType, project_id: Optional[UUID] = None
+        self, task_type: TaskType, project_id: UUID
     ) -> Dict[str, Any]:
         """
         Get queue statistics.
 
         Args:
             task_type: Task type to get stats for
-            project_id: Optional project ID for project-specific stats
+            project_id: Project ID for project-specific stats (required)
 
         Returns:
             Queue statistics
+
+        Raises:
+            ValueError: If project_id is not provided
         """
+        if not project_id:
+            raise ValueError("project_id is required for queue stats")
+
         try:
             # Import repository here to avoid circular imports
             from app.infrastructure.repositories.queue_repository import (
                 queue_repository,
             )
 
-            # Use default project_id if not provided
-            default_project_id = (
-                project_id
-                or self._bootstrap_project_id
-                or UUID("12345678-1234-5678-9abc-123456789abc")
-            )
-
             # Use repository method with project_id
-            return await queue_repository.get_queue_stats(task_type, default_project_id)
+            return await queue_repository.get_queue_stats(task_type, project_id)
 
         except Exception as e:
             logger.error(f"Failed to get queue stats for {task_type}: {e}")
             return {"error": str(e), "timestamp": datetime.utcnow().isoformat()}
 
-    async def cleanup_expired_tasks(self, max_age_hours: int = 24) -> int:
+    async def cleanup_expired_tasks(self, project_id: UUID, max_age_hours: int = 24) -> int:
         """
         Clean up expired task data.
 
         Args:
+            project_id: Project ID for project-specific cleanup (required)
             max_age_hours: Maximum age for task data
 
         Returns:
             Number of tasks cleaned up
+
+        Raises:
+            ValueError: If project_id is not provided
         """
+        if not project_id:
+            raise ValueError("project_id is required for task cleanup")
+
         try:
             # Import repository here to avoid circular imports
             from app.infrastructure.repositories.queue_repository import (
                 queue_repository,
             )
 
-            # Use default project_id for cleanup - TODO: Clean up for all projects
-            default_project_id = self._bootstrap_project_id or UUID(
-                "12345678-1234-5678-9abc-123456789abc"
-            )
-
             # Use repository method with project_id
-            return await queue_repository.cleanup_expired_tasks(
-                default_project_id, max_age_hours
-            )
+            return await queue_repository.cleanup_expired_tasks(project_id, max_age_hours)
 
         except Exception as e:
             logger.error(f"Failed to cleanup expired tasks: {e}")
             return 0
 
     async def get_all_queue_stats(
-        self, project_id: Optional[UUID] = None
+        self, project_id: UUID
     ) -> Dict[str, Any]:
         """
         Get statistics for all queues.
 
         Args:
-            project_id: Optional project ID for project-specific stats
+            project_id: Project ID for project-specific stats (required)
 
         Returns:
             All queue statistics
+
+        Raises:
+            ValueError: If project_id is not provided
         """
+        if not project_id:
+            raise ValueError("project_id is required for queue stats")
+
         try:
             # Import repository here to avoid circular imports
             from app.infrastructure.repositories.queue_repository import (
                 queue_repository,
             )
 
-            # Use default project_id if not provided
-            default_project_id = (
-                project_id
-                or self._bootstrap_project_id
-                or UUID("12345678-1234-5678-9abc-123456789abc")
-            )
-
             # Use repository method with project_id
-            return await queue_repository.get_all_queue_stats(default_project_id)
+            return await queue_repository.get_all_queue_stats(project_id)
 
         except Exception as e:
             logger.error(f"Failed to get all queue stats: {e}")

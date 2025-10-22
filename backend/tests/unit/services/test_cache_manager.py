@@ -70,6 +70,7 @@ class TestCacheManager:
     @pytest.mark.asyncio
     async def test_health_check(self, cache_manager):
         """Test comprehensive health check."""
+        project_id = uuid4()
         mock_health_status = {
             "status": "healthy",
             "timestamp": datetime.utcnow().isoformat(),
@@ -82,7 +83,7 @@ class TestCacheManager:
             "perform_comprehensive_health_check",
             return_value=mock_health_status,
         ) as mock_health:
-            result = await cache_manager.health_check()
+            result = await cache_manager.health_check(project_id)
 
             mock_health.assert_called_once()
             assert result["status"] == "healthy"
@@ -280,6 +281,7 @@ class TestCacheManager:
     @pytest.mark.asyncio
     async def test_check_rate_limit_allowed(self, cache_manager):
         """Test rate limit check (allowed)."""
+        project_id = uuid4()
         identifier = "user123"
         config = RateLimitConfig(requests_per_window=100, window_seconds=3600)
         mock_result = {
@@ -296,15 +298,16 @@ class TestCacheManager:
             "check_rate_limit",
             return_value=mock_result,
         ) as mock_check:
-            result = await cache_manager.check_rate_limit("user", identifier, config)
+            result = await cache_manager.check_rate_limit(identifier, "user", config, project_id)
 
-            mock_check.assert_called_once_with(identifier, "user", config)
+            mock_check.assert_called_once_with(identifier, "user", config, project_id)
             assert result["allowed"] is True
             assert result["remaining_requests"] == 95
 
     @pytest.mark.asyncio
     async def test_check_rate_limit_exceeded(self, cache_manager):
         """Test rate limit check (exceeded)."""
+        project_id = uuid4()
         identifier = "user123"
         config = RateLimitConfig(requests_per_window=100, window_seconds=3600)
         mock_result = {
@@ -321,15 +324,16 @@ class TestCacheManager:
             "check_rate_limit",
             return_value=mock_result,
         ) as mock_check:
-            result = await cache_manager.check_rate_limit("user", identifier, config)
+            result = await cache_manager.check_rate_limit(identifier, "user", config, project_id)
 
-            mock_check.assert_called_once_with(identifier, "user", config)
+            mock_check.assert_called_once_with(identifier, "user", config, project_id)
             assert result["allowed"] is False
             assert result["remaining_requests"] == 0
 
     @pytest.mark.asyncio
     async def test_check_rate_limit_service_error(self, cache_manager):
         """Test rate limit check with service error (fail open)."""
+        project_id = uuid4()
         identifier = "user123"
         config = RateLimitConfig(requests_per_window=100, window_seconds=3600)
 
@@ -338,7 +342,7 @@ class TestCacheManager:
             "check_rate_limit",
             side_effect=Exception("Service unavailable"),
         ) as mock_check:
-            result = await cache_manager.check_rate_limit("user", identifier, config)
+            result = await cache_manager.check_rate_limit(identifier, "user", config, project_id)
 
             mock_check.assert_called_once()
             # Should fail open - allow request
@@ -348,6 +352,7 @@ class TestCacheManager:
     @pytest.mark.asyncio
     async def test_get_rate_limit_status(self, cache_manager):
         """Test getting rate limit status."""
+        project_id = uuid4()
         identifier = "user123"
         window = RateLimitWindow.HOUR
         limit = 100
@@ -366,26 +371,28 @@ class TestCacheManager:
             return_value=mock_result,
         ) as mock_status:
             result = await cache_manager.get_rate_limit_status(
-                "user", identifier, window, limit
+                identifier, "user", window, limit, project_id
             )
 
-            mock_status.assert_called_once_with(identifier, "user", window, limit)
+            mock_status.assert_called_once_with(identifier, "user", window, limit, project_id)
             assert result["current_count"] == 25
             assert result["remaining_requests"] == 75
 
     @pytest.mark.asyncio
     async def test_start_progress_tracking(self, cache_manager):
         """Test starting progress tracking."""
+        project_id = uuid4()
         correlation_id = uuid4()
         total_steps = 5
 
         with patch.object(cache_manager.repository.progress, "save") as mock_save:
             result = await cache_manager.start_progress_tracking(
-                correlation_id, total_steps
+                correlation_id, total_steps, project_id
             )
 
             mock_save.assert_called_once()
             saved_progress = mock_save.call_args[0][0]
+            assert saved_progress.project_id == project_id
             assert saved_progress.correlation_id == correlation_id
             assert saved_progress.total_steps == total_steps
             assert saved_progress.current_step == 0
@@ -394,6 +401,7 @@ class TestCacheManager:
     @pytest.mark.asyncio
     async def test_update_progress(self, cache_manager):
         """Test updating progress."""
+        project_id = uuid4()
         correlation_id = uuid4()
         step = 2
         message = "Processing business analyst response"
@@ -401,14 +409,15 @@ class TestCacheManager:
         with patch.object(
             cache_manager.repository.progress, "update_progress", return_value=True
         ) as mock_update:
-            result = await cache_manager.update_progress(correlation_id, step, message)
+            result = await cache_manager.update_progress(correlation_id, step, message, project_id)
 
-            mock_update.assert_called_once_with(correlation_id, step, message)
+            mock_update.assert_called_once_with(correlation_id, step, message, project_id)
             assert result is True
 
     @pytest.mark.asyncio
     async def test_increment_progress(self, cache_manager):
         """Test incrementing progress."""
+        project_id = uuid4()
         correlation_id = uuid4()
         message = "Next step completed"
         mock_progress = MagicMock()
@@ -422,43 +431,46 @@ class TestCacheManager:
             with patch.object(
                 cache_manager.repository.progress, "update_progress", return_value=True
             ) as mock_update:
-                result = await cache_manager.increment_progress(correlation_id, message)
+                result = await cache_manager.increment_progress(correlation_id, message, project_id)
 
-                mock_find.assert_called_once_with(correlation_id)
-                mock_update.assert_called_once_with(correlation_id, 3, message)
+                mock_find.assert_called_once_with(correlation_id, project_id)
+                mock_update.assert_called_once_with(correlation_id, 3, message, project_id)
                 assert result is True
 
     @pytest.mark.asyncio
     async def test_complete_progress(self, cache_manager):
         """Test completing progress."""
+        project_id = uuid4()
         correlation_id = uuid4()
         message = "Operation completed successfully"
 
         with patch.object(
             cache_manager.repository.progress, "complete_progress", return_value=True
         ) as mock_complete:
-            result = await cache_manager.complete_progress(correlation_id, message)
+            result = await cache_manager.complete_progress(correlation_id, message, project_id)
 
-            mock_complete.assert_called_once_with(correlation_id, message)
+            mock_complete.assert_called_once_with(correlation_id, message, project_id)
             assert result is True
 
     @pytest.mark.asyncio
     async def test_fail_progress(self, cache_manager):
         """Test failing progress."""
+        project_id = uuid4()
         correlation_id = uuid4()
         error_message = "Processing failed due to error"
 
         with patch.object(
             cache_manager.repository.progress, "fail_progress", return_value=True
         ) as mock_fail:
-            result = await cache_manager.fail_progress(correlation_id, error_message)
+            result = await cache_manager.fail_progress(correlation_id, project_id, error_message)
 
-            mock_fail.assert_called_once_with(correlation_id, error_message)
+            mock_fail.assert_called_once_with(correlation_id, project_id, error_message)
             assert result is True
 
     @pytest.mark.asyncio
     async def test_get_progress(self, cache_manager):
         """Test getting progress."""
+        project_id = uuid4()
         correlation_id = uuid4()
         mock_progress = MagicMock()
         mock_progress.correlation_id = correlation_id
@@ -479,9 +491,9 @@ class TestCacheManager:
             "find_by_correlation_id",
             return_value=mock_progress,
         ) as mock_find:
-            result = await cache_manager.get_progress(correlation_id)
+            result = await cache_manager.get_progress(correlation_id, project_id)
 
-            mock_find.assert_called_once_with(correlation_id)
+            mock_find.assert_called_once_with(correlation_id, project_id)
             assert result["correlation_id"] == str(correlation_id)
             assert result["total_steps"] == 5
             assert result["current_step"] == 3
@@ -601,12 +613,13 @@ class TestCacheManager:
     @pytest.mark.asyncio
     async def test_error_handling_in_health_check(self, cache_manager):
         """Test error handling in health check."""
+        project_id = uuid4()
         with patch.object(
             cache_manager.health_service,
             "perform_comprehensive_health_check",
             side_effect=Exception("Health check failed"),
         ) as mock_health:
-            result = await cache_manager.health_check()
+            result = await cache_manager.health_check(project_id)
 
             mock_health.assert_called_once()
             assert result["status"] == "unhealthy"
@@ -634,6 +647,7 @@ class TestCacheManager:
     @pytest.mark.asyncio
     async def test_error_handling_in_check_rate_limit(self, cache_manager):
         """Test error handling in check rate limit with different exception types."""
+        project_id = uuid4()
         identifier = "user123"
         config = RateLimitConfig(requests_per_window=100, window_seconds=3600)
 
@@ -649,7 +663,7 @@ class TestCacheManager:
                 side_effect=exception,
             ) as mock_check:
                 result = await cache_manager.check_rate_limit(
-                    "user", identifier, config
+                    identifier, "user", config, project_id
                 )
 
                 mock_check.assert_called_once()

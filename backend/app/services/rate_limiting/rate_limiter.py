@@ -18,6 +18,7 @@ from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
 from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 from app.core.config import settings
 from app.infrastructure.redis.connection_factory import redis_connection_factory
@@ -353,6 +354,10 @@ class RateLimiter:
         Returns:
             Rate limit check result
         """
+        # Validate cost parameter
+        if cost < 1:
+            raise ValueError("cost must be >= 1")
+
         await self.initialize()
 
         with tracer.start_as_current_span("rate_limiter.check") as span:
@@ -390,7 +395,10 @@ class RateLimiter:
                     current_count = await redis_client.zcard(key)
                     span.set_attribute("redis_current_count", current_count)
 
-                allowed, current_count, remaining, reset_seconds, limit = result
+                allowed, current_count, remaining, reset_ms, limit = result
+
+                # Convert milliseconds to seconds using ceiling division
+                reset_seconds = (reset_ms + 999) // 1000
 
                 rate_limit_result = RateLimitResult(
                     allowed=bool(allowed),
@@ -426,7 +434,7 @@ class RateLimiter:
             except RedisConnectionException as e:
                 logger.error(f"Redis connection error during rate limit check: {e}")
                 span.set_status(
-                    trace.Status(trace.StatusCode.ERROR, "Redis connection failed")
+                    Status(StatusCode.ERROR, "Redis connection failed")
                 )
 
                 # Fail open - allow request if Redis is unavailable
@@ -444,7 +452,7 @@ class RateLimiter:
 
             except Exception as e:
                 logger.error(f"Rate limit check failed for {identifier}: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.set_status(Status(StatusCode.ERROR, str(e)))
 
                 # Fail open - allow request on unexpected errors
                 return RateLimitResult(
@@ -561,78 +569,75 @@ class RateLimiter:
             return False
 
     async def get_rate_limit_metrics(
-        self, project_id: Optional[UUID] = None
+        self, project_id: UUID
     ) -> Dict[str, Any]:
         """
         Get rate limiting metrics for monitoring.
 
         Args:
-            project_id: Optional project identifier for project-specific metrics
+            project_id: Project identifier for project-specific metrics
 
         Returns:
             Rate limiting metrics and statistics
         """
+        # Validate project_id
+        if project_id is None:
+            raise ValueError("project_id is required")
+
         try:
-            if project_id:
-                async with self._redis_factory.get_connection(
-                    project_id
-                ) as redis_client:
-                    pattern = "rate_limit:*"
-                    keys = []
+            async with self._redis_factory.get_connection(
+                project_id
+            ) as redis_client:
+                pattern = "rate_limit:*"
+                keys = []
 
-                    # Use SCAN to avoid blocking Redis
-                    cursor = 0
-                    while True:
-                        cursor, batch_keys = await redis_client.scan(
-                            cursor=cursor, match=pattern, count=100
-                        )
-                        keys.extend(batch_keys)
-                        if cursor == 0:
-                            break
+                # Use SCAN to avoid blocking Redis
+                cursor = 0
+                while True:
+                    cursor, batch_keys = await redis_client.scan(
+                        cursor=cursor, match=pattern, count=100
+                    )
+                    keys.extend(batch_keys)
+                    if cursor == 0:
+                        break
 
-                    metrics = {
-                        "total_active_limits": len(keys),
-                        "limits_by_type": {},
-                        "memory_usage": 0,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "project_id": str(project_id),
-                    }
-
-                    # Count limits by type
-                    for key in keys:
-                        parts = key.split(":")
-                        if len(parts) >= 3:
-                            limit_type = parts[1]
-                            metrics["limits_by_type"][limit_type] = (
-                                metrics["limits_by_type"].get(limit_type, 0) + 1
-                            )
-
-                    # Get memory usage per key (calling memory_usage individually)
-                    if keys:
-                        total_memory = 0
-                        for key in keys:
-                            try:
-                                # Need to call on underlying redis client with prefixed key
-                                prefixed_key = redis_client._make_key(key)
-                                mem = await redis_client._redis.memory_usage(
-                                    prefixed_key
-                                )
-                                if mem is not None:
-                                    total_memory += mem
-                            except Exception as e:
-                                logger.debug(
-                                    f"Failed to get memory usage for key {key}: {e}"
-                                )
-                                continue
-                        metrics["memory_usage"] = total_memory
-
-                    return metrics
-            else:
-                # Global metrics not supported with project isolation
-                return {
-                    "error": "Global metrics not supported with project isolation. Please provide project_id.",
+                metrics = {
+                    "total_active_limits": len(keys),
+                    "limits_by_type": {},
+                    "memory_usage": 0,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "project_id": str(project_id),
                 }
+
+                # Count limits by type
+                for key in keys:
+                    parts = key.split(":")
+                    if len(parts) >= 3:
+                        limit_type = parts[1]
+                        metrics["limits_by_type"][limit_type] = (
+                            metrics["limits_by_type"].get(limit_type, 0) + 1
+                        )
+
+                # Get memory usage per key (calling memory_usage individually)
+                if keys:
+                    total_memory = 0
+                    for key in keys:
+                        try:
+                            # Need to call on underlying redis client with prefixed key
+                            prefixed_key = redis_client._make_key(key)
+                            mem = await redis_client._redis.memory_usage(
+                                prefixed_key
+                            )
+                            if mem is not None:
+                                total_memory += mem
+                        except Exception as e:
+                            logger.debug(
+                                f"Failed to get memory usage for key {key}: {e}"
+                            )
+                            continue
+                    metrics["memory_usage"] = total_memory
+
+                return metrics
 
         except Exception as e:
             logger.error(f"Failed to get rate limit metrics: {e}")

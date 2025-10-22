@@ -106,7 +106,10 @@ class RedisPerformanceTester:
 
     async def benchmark_cache_operations(self, cache_manager, iterations=100):
         """Benchmark cache operations."""
-        project_id = uuid4()
+        # TODO: add input validation - ensure cache_manager is not None and has required methods
+        # TODO: validate iterations >= 19 for quantile calculations with n=20
+        # TODO: type hint cache_manager parameter properly
+        project_id = str(uuid4())  # Convert to string for consistency
         test_data = {"benchmark": "test_data"}
 
         # Benchmark writes

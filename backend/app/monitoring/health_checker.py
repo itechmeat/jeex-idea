@@ -115,6 +115,8 @@ class RedisHealthChecker:
         self._health_check_task: Optional[asyncio.Task] = None
         # Health check caching - per project
         self._latest_health_status: Dict[UUID, RedisHealthStatus] = {}
+        # Monitored project ID for background health checks
+        self._project_id: Optional[UUID] = None
 
         logger.info(
             "Redis health checker initialized",

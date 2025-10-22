@@ -105,8 +105,8 @@ async def test_atomic_dequeue():
         return True
 
     except Exception as e:
-        print(f"✗ Test failed with error: {e}")
-        return False
+        logger.exception("✗ Test failed with error")
+        raise
 
 
 async def test_project_preferring_behavior():
@@ -145,8 +145,8 @@ async def test_project_preferring_behavior():
         return True
 
     except Exception as e:
-        print(f"✗ Project-preferring test failed: {e}")
-        return False
+        logger.exception("✗ Project-preferring test failed")
+        raise
 
 
 async def test_timeout_handling():
@@ -186,8 +186,8 @@ async def test_timeout_handling():
             return False
 
     except Exception as e:
-        print(f"✗ Timeout test failed: {e}")
-        return False
+        logger.exception("✗ Timeout test failed")
+        raise
 
 
 async def main():

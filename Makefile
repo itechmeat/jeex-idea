@@ -394,26 +394,41 @@ qdrant-logs: ## Tail Qdrant container logs
 ##@ Redis Cache and Queue Service
 
 redis-health: ## Check Redis service health and connectivity
+	@if [ -z "$(REDIS_PASSWORD)" ]; then \
+		echo "$(RED)Error: REDIS_PASSWORD environment variable is required$(RESET)"; \
+		echo "Please set REDIS_PASSWORD in your environment"; \
+		exit 1; \
+	fi
 	@echo "$(GREEN)Checking Redis health...$(RESET)"
 	@echo "$(YELLOW)Service Health:$(RESET)"
-	@docker-compose exec redis redis-cli -a $${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production} ping || echo "Redis unhealthy"
+	@docker-compose exec redis redis-cli -a $(REDIS_PASSWORD) ping || echo "Redis unhealthy"
 	@echo ""
 	@echo "$(YELLOW)Service Info:$(RESET)"
-	@docker-compose exec redis redis-cli -a $${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production} info server | grep -E "redis_version|uptime_in_days|connected_clients|used_memory_human" || echo "Failed to get info"
+	@docker-compose exec redis redis-cli -a $(REDIS_PASSWORD) info server | grep -E "redis_version|uptime_in_days|connected_clients|used_memory_human" || echo "Failed to get info"
 
 redis-stats: ## Display Redis performance and memory statistics
+	@if [ -z "$(REDIS_PASSWORD)" ]; then \
+		echo "$(RED)Error: REDIS_PASSWORD environment variable is required$(RESET)"; \
+		echo "Please set REDIS_PASSWORD in your environment"; \
+		exit 1; \
+	fi
 	@echo "$(GREEN)Redis performance statistics:$(RESET)"
-	@docker-compose exec redis redis-cli -a $${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production} info memory | grep -E "used_memory_human|used_memory_peak_human|maxmemory_human" || echo "Failed to get memory info"
+	@docker-compose exec redis redis-cli -a $(REDIS_PASSWORD) info memory | grep -E "used_memory_human|used_memory_peak_human|maxmemory_human" || echo "Failed to get memory info"
 	@echo ""
 	@echo "$(YELLOW)Connection Stats:$(RESET)"
-	@docker-compose exec redis redis-cli -a $${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production} info clients | grep -E "connected_clients|blocked_clients" || echo "Failed to get client info"
+	@docker-compose exec redis redis-cli -a $(REDIS_PASSWORD) info clients | grep -E "connected_clients|blocked_clients" || echo "Failed to get client info"
 	@echo ""
 	@echo "$(YELLOW)Command Stats:$(RESET)"
-	@docker-compose exec redis redis-cli -a $${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production} info stats | grep -E "total_commands_processed|total_connections_received|keyspace_hits|keyspace_misses" || echo "Failed to get command stats"
+	@docker-compose exec redis redis-cli -a $(REDIS_PASSWORD) info stats | grep -E "total_commands_processed|total_connections_received|keyspace_hits|keyspace_misses" || echo "Failed to get command stats"
 
 redis-shell: ## Open Redis CLI shell
+	@if [ -z "$(REDIS_PASSWORD)" ]; then \
+		echo "$(RED)Error: REDIS_PASSWORD environment variable is required$(RESET)"; \
+		echo "Please set REDIS_PASSWORD in your environment"; \
+		exit 1; \
+	fi
 	@echo "$(GREEN)Opening Redis CLI shell...$(RESET)"
-	@docker-compose exec redis redis-cli -a $${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production}
+	@docker-compose exec redis redis-cli -a $(REDIS_PASSWORD)
 
 redis-logs: ## Tail Redis container logs
 	@echo "$(GREEN)Showing Redis container logs...$(RESET)"

@@ -13,6 +13,7 @@ from typing import List, Optional, Dict, Any, Union
 from uuid import UUID
 
 from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 from ...constants import SYSTEM_PROJECT_ID
 
@@ -77,12 +78,22 @@ class CacheManager:
             logger.error(f"Failed to initialize cache manager: {e}")
             raise
 
-    async def health_check(self) -> Dict[str, Any]:
-        """Perform comprehensive health check."""
+    async def health_check(self, project_id: UUID) -> Dict[str, Any]:
+        """
+        Perform comprehensive health check.
+
+        Args:
+            project_id: Project ID for isolation (REQUIRED)
+
+        Returns:
+            Health status dictionary
+        """
         with tracer.start_as_current_span("cache_manager.health_check") as span:
+            span.set_attribute("project_id", str(project_id))
+
             try:
                 health_status = (
-                    await self.health_service.perform_comprehensive_health_check()
+                    await self.health_service.perform_comprehensive_health_check(project_id)
                 )
 
                 # Add cache manager specific information
@@ -112,7 +123,7 @@ class CacheManager:
 
             except Exception as e:
                 logger.error(f"Cache manager health check failed: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.set_status(Status(StatusCode.ERROR, str(e)))
 
                 return {
                     "status": "unhealthy",
@@ -154,7 +165,7 @@ class CacheManager:
                     for tag in tags:
                         cache.add_tag(tag)
 
-                await self.repository.project_cache.save(cache)
+                await self.repository.project_cache.save(cache, project_id)
 
                 logger.debug(
                     f"Cached project data for {project_id}",
@@ -165,7 +176,7 @@ class CacheManager:
 
             except Exception as e:
                 logger.error(f"Failed to cache project data for {project_id}: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 return False
 
     async def get_project_data(self, project_id: UUID) -> Optional[Dict[str, Any]]:
@@ -196,7 +207,7 @@ class CacheManager:
 
             except Exception as e:
                 logger.error(f"Failed to get cached project data for {project_id}: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 return None
 
     async def invalidate_project_cache(
@@ -238,7 +249,7 @@ class CacheManager:
                 logger.error(
                     f"Failed to invalidate project cache for {project_id}: {e}"
                 )
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 return 0
 
     async def cache_project_context(
@@ -310,6 +321,7 @@ class CacheManager:
 
     async def create_user_session(
         self,
+        project_id: UUID,
         user_id: UUID,
         user_data: Dict[str, Any],
         project_access: Optional[List[UUID]] = None,
@@ -319,6 +331,7 @@ class CacheManager:
         Create new user session.
 
         Args:
+            project_id: Project ID for isolation (REQUIRED)
             user_id: User ID
             user_data: User session data
             project_access: List of projects user can access
@@ -328,11 +341,13 @@ class CacheManager:
             Created session or None if failed
         """
         with tracer.start_as_current_span("cache_manager.create_user_session") as span:
+            span.set_attribute("project_id", str(project_id))
             span.set_attribute("user_id", str(user_id))
             span.set_attribute("project_count", len(project_access or []))
 
             try:
                 session = await self.session_service.create_session(
+                    project_id=project_id,
                     user_id=user_id,
                     user_data=user_data,
                     project_access=project_access,
@@ -343,7 +358,7 @@ class CacheManager:
 
             except Exception as e:
                 logger.error(f"Failed to create user session for {user_id}: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 return None
 
     async def validate_user_session(self, session_id: UUID) -> Optional[UserSession]:
@@ -367,7 +382,7 @@ class CacheManager:
 
             except Exception as e:
                 logger.error(f"Failed to validate user session {session_id}: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 return None
 
     async def revoke_user_session(
@@ -392,7 +407,7 @@ class CacheManager:
 
             except Exception as e:
                 logger.error(f"Failed to revoke user session {session_id}: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 return False
 
     async def grant_project_access(self, session_id: UUID, project_id: UUID) -> bool:
@@ -418,7 +433,7 @@ class CacheManager:
     # Rate Limiting Operations
 
     async def check_rate_limit(
-        self, identifier: str, limit_type: str, config: RateLimitConfig
+        self, identifier: str, limit_type: str, config: RateLimitConfig, project_id: UUID
     ) -> Dict[str, Any]:
         """
         Check rate limit for identifier.
@@ -427,6 +442,7 @@ class CacheManager:
             identifier: Rate limit identifier (user ID, IP, etc.)
             limit_type: Type of rate limit (user, project, ip)
             config: Rate limit configuration
+            project_id: Project ID for isolation (REQUIRED)
 
         Returns:
             Rate limit check result
@@ -435,10 +451,11 @@ class CacheManager:
             span.set_attribute("identifier", identifier)
             span.set_attribute("limit_type", limit_type)
             span.set_attribute("limit", config.requests_per_window)
+            span.set_attribute("project_id", str(project_id))
 
             try:
                 result = await self.rate_limit_service.check_rate_limit(
-                    identifier, limit_type, config
+                    identifier, limit_type, config, project_id
                 )
 
                 if not result["allowed"]:
@@ -451,7 +468,7 @@ class CacheManager:
 
             except Exception as e:
                 logger.error(f"Failed to check rate limit for {identifier}: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.set_status(Status(StatusCode.ERROR, str(e)))
 
                 # Fail open - allow request if rate limiting fails
                 return {
@@ -463,11 +480,12 @@ class CacheManager:
                     "window": config.window_seconds,
                     "identifier": identifier,
                     "limit_type": limit_type,
+                    "project_id": str(project_id),
                     "error": "Rate limiting service unavailable",
                 }
 
     async def get_rate_limit_status(
-        self, identifier: str, limit_type: str, window: RateLimitWindow, limit: int
+        self, identifier: str, limit_type: str, window: RateLimitWindow, limit: int, project_id: UUID
     ) -> Dict[str, Any]:
         """
         Get current rate limit status without incrementing.
@@ -477,13 +495,14 @@ class CacheManager:
             limit_type: Type of rate limit
             window: Time window
             limit: Rate limit threshold
+            project_id: Project ID for isolation (REQUIRED)
 
         Returns:
             Current rate limit status
         """
         try:
             return await self.rate_limit_service.get_rate_limit_status(
-                identifier, limit_type, window, limit
+                identifier, limit_type, window, limit, project_id
             )
 
         except Exception as e:
@@ -496,6 +515,7 @@ class CacheManager:
                 "window": window.value,
                 "identifier": identifier,
                 "limit_type": limit_type,
+                "project_id": str(project_id),
                 "allowed": True,
                 "error": "Rate limiting service unavailable",
             }
@@ -503,7 +523,7 @@ class CacheManager:
     # Progress Tracking Operations
 
     async def start_progress_tracking(
-        self, correlation_id: UUID, total_steps: int
+        self, correlation_id: UUID, total_steps: int, project_id: UUID
     ) -> bool:
         """
         Start progress tracking for operation.
@@ -511,13 +531,14 @@ class CacheManager:
         Args:
             correlation_id: Operation correlation ID
             total_steps: Total number of steps
+            project_id: Project ID for isolation (REQUIRED)
 
         Returns:
             True if progress tracking started successfully
         """
         try:
-            progress = Progress.create(correlation_id, total_steps)
-            await self.repository.progress.save(progress)
+            progress = Progress.create(correlation_id, total_steps, project_id)
+            await self.repository.progress.save(progress, project_id)
 
             logger.debug(f"Started progress tracking for {correlation_id}")
             return True
@@ -527,7 +548,7 @@ class CacheManager:
             return False
 
     async def update_progress(
-        self, correlation_id: UUID, step: int, message: str
+        self, correlation_id: UUID, step: int, message: str, project_id: UUID
     ) -> bool:
         """
         Update progress for operation.
@@ -536,37 +557,39 @@ class CacheManager:
             correlation_id: Operation correlation ID
             step: Current step number
             message: Progress message
+            project_id: Project ID for isolation (REQUIRED)
 
         Returns:
             True if progress updated successfully
         """
         try:
             return await self.repository.progress.update_progress(
-                correlation_id, step, message
+                correlation_id, step, message, project_id
             )
 
         except Exception as e:
             logger.error(f"Failed to update progress for {correlation_id}: {e}")
             return False
 
-    async def increment_progress(self, correlation_id: UUID, message: str) -> bool:
+    async def increment_progress(self, correlation_id: UUID, message: str, project_id: UUID) -> bool:
         """
         Increment progress by one step.
 
         Args:
             correlation_id: Operation correlation ID
             message: Progress message
+            project_id: Project ID for isolation (REQUIRED)
 
         Returns:
             True if progress updated successfully
         """
         try:
             progress = await self.repository.progress.find_by_correlation_id(
-                correlation_id
+                correlation_id, project_id
             )
             if progress:
                 return await self.repository.progress.update_progress(
-                    correlation_id, progress.current_step + 1, message
+                    correlation_id, progress.current_step + 1, message, project_id
                 )
             return False
 
@@ -575,7 +598,7 @@ class CacheManager:
             return False
 
     async def complete_progress(
-        self, correlation_id: UUID, message: str = "Operation completed"
+        self, correlation_id: UUID, message: str = "Operation completed", project_id: UUID = None
     ) -> bool:
         """
         Mark progress as completed.
@@ -583,25 +606,30 @@ class CacheManager:
         Args:
             correlation_id: Operation correlation ID
             message: Completion message
+            project_id: Project ID for isolation (REQUIRED)
 
         Returns:
             True if progress completed successfully
         """
+        if project_id is None:
+            raise ValueError("project_id is required for progress operations")
+
         try:
             return await self.repository.progress.complete_progress(
-                correlation_id, message
+                correlation_id, project_id, message
             )
 
         except Exception as e:
             logger.error(f"Failed to complete progress for {correlation_id}: {e}")
             return False
 
-    async def fail_progress(self, correlation_id: UUID, error_message: str) -> bool:
+    async def fail_progress(self, correlation_id: UUID, project_id: UUID, error_message: str) -> bool:
         """
         Mark progress as failed.
 
         Args:
             correlation_id: Operation correlation ID
+            project_id: Project ID for isolation (REQUIRED)
             error_message: Error message
 
         Returns:
@@ -609,26 +637,27 @@ class CacheManager:
         """
         try:
             return await self.repository.progress.fail_progress(
-                correlation_id, error_message
+                correlation_id, project_id, error_message
             )
 
         except Exception as e:
             logger.error(f"Failed to fail progress for {correlation_id}: {e}")
             return False
 
-    async def get_progress(self, correlation_id: UUID) -> Optional[Dict[str, Any]]:
+    async def get_progress(self, correlation_id: UUID, project_id: UUID) -> Optional[Dict[str, Any]]:
         """
         Get current progress for operation.
 
         Args:
             correlation_id: Operation correlation ID
+            project_id: Project ID for isolation (REQUIRED)
 
         Returns:
             Progress data or None if not found
         """
         try:
             progress = await self.repository.progress.find_by_correlation_id(
-                correlation_id
+                correlation_id, project_id
             )
 
             if progress:
@@ -688,7 +717,7 @@ class CacheManager:
 
             except Exception as e:
                 logger.error(f"Failed to cleanup expired cache entries: {e}")
-                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 return {}
 
     async def get_cache_statistics(self) -> Dict[str, Any]:

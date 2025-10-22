@@ -531,16 +531,10 @@ async def export_dashboard_configurations(
     Prometheus rules, and datasource configurations.
     """
     try:
-        export_config = redis_dashboard_configuration.export_dashboard_configs()
-
-        # Add project-specific information if provided
-        if project_id:
-            export_config["project_id"] = str(project_id)
-            export_config["grafana_dashboard"] = (
-                redis_dashboard_configuration.get_grafana_dashboard_json(
-                    str(project_id)
-                )
-            )
+        # export_dashboard_configs requires project_id parameter
+        export_config = redis_dashboard_configuration.export_dashboard_configs(
+            str(project_id) if project_id else "default"
+        )
 
         return export_config
 
@@ -671,13 +665,21 @@ async def get_monitoring_status():
     """
     try:
         # Check service status
+        # NOTE: Using private _task attributes as no public API exists for checking task status
+        # This is necessary for monitoring the background task lifecycle
         metrics_running = redis_metrics_collector._collection_task is not None
         health_running = redis_health_checker._health_check_task is not None
         performance_running = redis_performance_monitor._analysis_task is not None
         alerts_running = redis_alert_manager._evaluation_task is not None
 
         # Get service-specific status
-        latest_health = await redis_health_checker.get_latest_health_status()
+        # NOTE: get_latest_health_status requires project_id but monitoring status is system-wide
+        # Using None/default for cross-project monitoring status
+        default_project_id = UUID("00000000-0000-0000-0000-000000000000")
+        latest_health = await redis_health_checker.get_latest_health_status(
+            default_project_id
+        )
+        # NOTE: get_alert_summary is intentionally cross-project (global alert summary)
         alert_summary = await redis_alert_manager.get_alert_summary()
 
         return {

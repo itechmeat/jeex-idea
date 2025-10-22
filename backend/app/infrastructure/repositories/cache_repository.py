@@ -67,9 +67,15 @@ class RedisProjectCacheRepository(ProjectCacheRepository):
         start_time = time.time()
         key = cache.get_key()
 
+        # Validate project_id matches cache.project_id
+        if cache.project_id != project_id:
+            raise ValueError(
+                f"Cache project_id {cache.project_id} does not match provided project_id {project_id}"
+            )
+
         try:
             async with redis_service.get_connection(
-                str(cache.project_id)
+                str(project_id)
             ) as redis_client:
                 # Prepare cache data
                 cache_data = {
@@ -175,10 +181,42 @@ class RedisProjectCacheRepository(ProjectCacheRepository):
         self, key: CacheKey, project_id: UUID
     ) -> Optional[ProjectCache]:
         """Find cache entry by key within project scope."""
+        start_time = time.time()
+
         try:
-            return await self.find_by_project_id(project_id)
+            async with redis_service.get_connection(str(project_id)) as redis_client:
+                cache_data = await redis_client.get(key.value)
+
+                if cache_data:
+                    cache = self._deserialize_project_cache(cache_data)
+                    if cache and not cache.is_expired():
+                        cache.access()
+                        # Update access count and timestamp
+                        await self._update_access_stats(cache)
+
+                        execution_time = (time.time() - start_time) * 1000
+                        self._record_metric(
+                            "get",
+                            str(key),
+                            True,
+                            execution_time,
+                            cache.size_bytes,
+                            str(project_id),
+                        )
+
+                        return cache
+
+                execution_time = (time.time() - start_time) * 1000
+                self._record_metric(
+                    "get", str(key), False, execution_time, None, str(project_id)
+                )
+                return None
 
         except Exception as e:
+            execution_time = (time.time() - start_time) * 1000
+            self._record_metric(
+                "get", str(key), False, execution_time, None, str(project_id), str(e)
+            )
             logger.exception(f"Failed to find cache by key {key.value}: {e}")
             raise RedisException(f"Failed to find cache by key: {str(e)}") from e
 
@@ -605,6 +643,12 @@ class RedisTaskQueueRepository(TaskQueueRepository):
         self, queue_name: str, task: QueuedTask, project_id: UUID
     ) -> None:
         """Add task to queue within project scope."""
+        # Validate task belongs to the tenant
+        if task.project_id != project_id:
+            raise ValueError(
+                f"Task project_id {task.project_id} does not match provided project_id {project_id}"
+            )
+
         try:
             async with redis_service.get_connection(str(project_id)) as redis_client:
                 queue_key = CacheKey.queue(queue_name)
@@ -893,12 +937,12 @@ class RedisTaskQueueRepository(TaskQueueRepository):
                 attempts=data.get("attempts", 0),
                 max_attempts=data.get("max_attempts", 3),
                 error_message=data.get("error_message"),
-                project_id=UUID(data["project_id"]) if data.get("project_id") else None,
+                project_id=UUID(data["project_id"]),  # Required field, will fail if missing
             )
             return task
 
         except Exception as e:
-            logger.error(f"Failed to deserialize queued task: {e}")
+            logger.error(f"Failed to deserialize queued task: {e}", exc_info=True)
             return None
 
 

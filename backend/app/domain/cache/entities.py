@@ -362,10 +362,12 @@ class Progress:
     Progress tracking entity.
 
     Represents progress of a long-running operation.
+    CRITICAL: project_id is REQUIRED for proper project isolation.
     """
 
     correlation_id: UUID
     total_steps: int
+    project_id: UUID  # REQUIRED - never Optional, never None
     current_step: int = 0
     message: str = ""
     step_messages: List[str] = field(default_factory=list)
@@ -382,9 +384,18 @@ class Progress:
             raise ValueError("Current step cannot be negative")
 
     @classmethod
-    def create(cls, correlation_id: UUID, total_steps: int) -> "Progress":
-        """Create new progress tracker."""
-        return cls(correlation_id=correlation_id, total_steps=total_steps)
+    def create(cls, correlation_id: UUID, total_steps: int, project_id: UUID) -> "Progress":
+        """Create new progress tracker.
+
+        Args:
+            correlation_id: Unique correlation ID for this operation
+            total_steps: Total number of steps
+            project_id: Project ID for isolation (REQUIRED)
+
+        Returns:
+            New Progress instance
+        """
+        return cls(correlation_id=correlation_id, total_steps=total_steps, project_id=project_id)
 
     def update_step(self, step: int, message: str) -> None:
         """Update current step with message."""

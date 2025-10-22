@@ -40,6 +40,7 @@ TECHNICAL FIXES IMPLEMENTED:
 - CRITICAL: Fixed BLPOP atomicity issue preventing duplicate task processing
 """
 
+import asyncio
 import json
 import logging
 import time
@@ -138,7 +139,7 @@ class QueueRepository:
         """
 
         # Atomic dequeue with priority handling and project-preferring behavior
-        # CRITICAL FIX: Replace BLPOP with atomic Lua script to prevent duplicates
+        # CRITICAL FIX: Replace BLPOP with LPOP (non-blocking) to prevent atomicity issues
         dequeue_script = """
         local priority_key = KEYS[1]
         local task_key_prefix = KEYS[2]
@@ -147,16 +148,13 @@ class QueueRepository:
         local now = ARGV[2]
         local project_id = ARGV[3]
         local queue_key = ARGV[4]
-        local timeout_seconds = tonumber(ARGV[5]) or 30
 
         -- Project-preferring dequeue: try project queue first, then global
         local project_queue_key = queue_key .. ":project:" .. project_id
 
-        -- First try to get from project-specific queue (blocking with timeout)
-        local project_tasks = redis.call('BLPOP', project_queue_key, timeout_seconds)
-        if project_tasks and #project_tasks >= 2 then
-            local task_data = project_tasks[2]
-
+        -- First try to get from project-specific queue (non-blocking)
+        local task_data = redis.call('LPOP', project_queue_key)
+        if task_data then
             -- Verify task exists in priority queue and remove it atomically
             local removed = redis.call('ZREM', priority_key, task_data)
             if removed > 0 then
@@ -281,7 +279,7 @@ class QueueRepository:
             status_key = f"task:{task_data.task_id}:status"
             project_queue_key = f"{queue_key}:project:{task_data.project_id}"
 
-            task_json = json.dumps(task_data.dict(), default=str)
+            task_json = json.dumps(task_data.model_dump(), default=str)
 
             async with self._redis_factory.get_connection(
                 str(task_data.project_id)
@@ -338,21 +336,36 @@ class QueueRepository:
             queue_key = f"queue:{queue_name}"
             task_key_prefix = "task:"
 
-            # CRITICAL FIX: Pass timeout_seconds to Lua script for proper blocking behavior
-            async with self._redis_factory.get_connection(
-                str(project_id)
-            ) as redis_client:
-                result = await redis_client.evalsha(
-                    self._lua_scripts["dequeue"],
-                    2,  # number of keys
-                    priority_key,
-                    task_key_prefix,
-                    worker_id,
-                    datetime.utcnow().isoformat(),
-                    str(project_id),
-                    queue_key,
-                    timeout_seconds,  # Pass timeout to Lua script
-                )
+            # Implement Python-level polling with timeout
+            deadline = time.monotonic() + timeout_seconds
+            result = None
+
+            while True:
+                async with self._redis_factory.get_connection(
+                    str(project_id)
+                ) as redis_client:
+                    result = await redis_client.evalsha(
+                        self._lua_scripts["dequeue"],
+                        2,  # number of keys
+                        priority_key,
+                        task_key_prefix,
+                        worker_id,
+                        datetime.utcnow().isoformat(),
+                        str(project_id),
+                        queue_key,
+                    )
+
+                # Check if we got a task
+                if result and result[0] == 1:
+                    break
+
+                # Check if timeout exceeded
+                if time.monotonic() >= deadline:
+                    result = [0, "No tasks available", 0, "none"]
+                    break
+
+                # Wait before next poll
+                await asyncio.sleep(0.2)
 
             success, task_json, attempts, queue_source = (
                 result[0],
@@ -364,7 +377,7 @@ class QueueRepository:
             if not success:
                 return None
 
-            task_data = TaskData.parse_raw(task_json)
+            task_data = TaskData.model_validate_json(task_json)
 
             # Log queue source for debugging
             logger.debug(
@@ -496,7 +509,7 @@ class QueueRepository:
                 task_json = await redis_client.get(task_key)
 
                 if task_json:
-                    return TaskData.parse_raw(task_json)
+                    return TaskData.model_validate_json(task_json)
 
             return None
 
@@ -661,7 +674,7 @@ class QueueRepository:
                         task_json = await redis_client.get(key)
                         if task_json:
                             try:
-                                task_data = TaskData.parse_raw(task_json)
+                                task_data = TaskData.model_validate_json(task_json)
                                 if task_data.created_at < cutoff_time:
                                     # Delete task data and status
                                     await redis_client.delete(key)

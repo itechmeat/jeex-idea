@@ -14,7 +14,6 @@ import warnings
 from .entities import (
     ProjectCache,
     UserSession,
-    TaskQueue,
     Progress,
     RateLimit,
     QueuedTask,

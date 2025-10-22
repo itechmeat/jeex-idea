@@ -59,6 +59,18 @@ class SlidingWindowStrategy(RateLimitStrategy):
         Maintains a sorted set of request timestamps, automatically
         removing entries outside the current window.
         """
+        # Input validation - fail fast
+        if not project_id:
+            raise ValueError("project_id is required")
+        if not identifier or not isinstance(identifier, str):
+            raise ValueError("identifier must be a non-empty string")
+        if not isinstance(limit, int) or limit <= 0:
+            raise ValueError("limit must be a positive integer")
+        if not isinstance(window, int) or window <= 0:
+            raise ValueError("window must be a positive integer")
+        if not isinstance(cost, int) or cost <= 0:
+            raise ValueError("cost must be a positive integer")
+
         key = f"proj:{project_id}:sliding_window:{identifier}:{window}"
         now = int(time.time())
 
@@ -127,8 +139,8 @@ class TokenBucketStrategy(RateLimitStrategy):
         self,
         project_id: UUID,
         identifier: str,
-        capacity: int,
-        refill_rate: int,  # tokens per second
+        limit: int,
+        window: int,
         cost: int = 1,
     ) -> Dict[str, Any]:
         """
@@ -137,6 +149,22 @@ class TokenBucketStrategy(RateLimitStrategy):
         Tokens are refilled based on elapsed time since last request.
         Allows for burst handling within capacity limits.
         """
+        # Input validation - fail fast
+        if not project_id:
+            raise ValueError("project_id is required")
+        if not identifier or not isinstance(identifier, str):
+            raise ValueError("identifier must be a non-empty string")
+        if not isinstance(limit, int) or limit <= 0:
+            raise ValueError("limit must be a positive integer")
+        if not isinstance(window, int) or window <= 0:
+            raise ValueError("window must be a positive integer")
+        if not isinstance(cost, int) or cost <= 0:
+            raise ValueError("cost must be a positive integer")
+
+        # Map standard parameters to token bucket parameters
+        capacity = limit
+        refill_rate = max(1, limit // window)  # tokens per second
+
         key = f"proj:{project_id}:token_bucket:{identifier}"
         now = int(time.time())
 

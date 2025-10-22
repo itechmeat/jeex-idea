@@ -298,6 +298,14 @@ class RedisAlertManager:
                 await asyncio.sleep(60)  # Evaluate every minute
             except asyncio.CancelledError:
                 break
+            except NotImplementedError:
+                # Alert manager needs project context - this is a known architectural limitation
+                # Log once and sleep for 1 hour to avoid log spam
+                logger.warning(
+                    "Alert evaluation skipped - requires project-scoped architecture refactor",
+                    sleep_duration_seconds=3600,
+                )
+                await asyncio.sleep(3600)  # Sleep for 1 hour
             except Exception as e:
                 logger.exception(
                     "Redis alert evaluation error", error=str(e), exc_info=True

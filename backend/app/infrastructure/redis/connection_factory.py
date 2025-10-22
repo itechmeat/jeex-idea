@@ -93,7 +93,9 @@ class RedisConnectionFactory:
                 redis_url = settings.REDIS_URL
                 parsed_url = urlparse(redis_url)
 
-                # Create connection configuration
+                # Create connection configuration using settings
+                # NOTE: REDIS_MAX_RETRIES and REDIS_RETRY_DELAY are handled by circuit breaker
+                # redis-py's retry_on_timeout provides basic retry for timeout errors
                 connection_kwargs = {
                     "host": parsed_url.hostname or "localhost",
                     "port": parsed_url.port or 6379,
@@ -101,10 +103,10 @@ class RedisConnectionFactory:
                     "password": parsed_url.password,
                     "encoding": "utf-8",
                     "decode_responses": True,
-                    "socket_connect_timeout": 10,
-                    "socket_timeout": 10,
-                    "retry_on_timeout": True,
-                    "health_check_interval": 30,
+                    "socket_connect_timeout": settings.REDIS_CONNECTION_TIMEOUT,
+                    "socket_timeout": settings.REDIS_OPERATION_TIMEOUT,
+                    "retry_on_timeout": True,  # Basic retry on timeout
+                    "health_check_interval": settings.REDIS_HEALTH_CHECK_INTERVAL,
                     "max_connections": settings.REDIS_MAX_CONNECTIONS,
                 }
 
@@ -175,7 +177,8 @@ class RedisConnectionFactory:
                 project_id_str = project_id
         except ValueError:
             raise RedisProjectIsolationException(
-                message=f"Invalid project_id format: {project_id}. Must be a valid UUID string or UUID object."
+                message=f"Invalid project_id format: {project_id}. Must be a valid UUID string or UUID object.",
+                project_id=str(project_id) if project_id else "invalid"
             )
         await self.initialize()
 
@@ -194,8 +197,8 @@ class RedisConnectionFactory:
             )
 
             # Add project isolation wrapper
-            if project_id:
-                redis_client = ProjectIsolatedRedisClient(redis_client, project_id)
+            if project_id_str:
+                redis_client = ProjectIsolatedRedisClient(redis_client, project_id_str)
 
             yield redis_client
 
@@ -271,10 +274,10 @@ class RedisConnectionFactory:
                 "password": default_pool.connection_kwargs.get("password"),
                 "encoding": "utf-8",
                 "decode_responses": True,
-                "socket_connect_timeout": 10,
-                "socket_timeout": 10,
+                "socket_connect_timeout": settings.REDIS_CONNECTION_TIMEOUT,
+                "socket_timeout": settings.REDIS_OPERATION_TIMEOUT,
                 "retry_on_timeout": True,
-                "health_check_interval": 30,
+                "health_check_interval": settings.REDIS_HEALTH_CHECK_INTERVAL,
                 "max_connections": max(
                     2, settings.REDIS_MAX_CONNECTIONS // 4
                 ),  # Smaller pools for projects
@@ -561,12 +564,50 @@ class ProjectIsolatedRedisClient:
         """Get Redis server information."""
         return await self._redis.info(section, **kwargs)
 
+    async def scan_iter(self, match: str = None, count: int = None, **kwargs):
+        """Scan keys with project isolation - yields unprefixed keys."""
+        # Prefix the match pattern
+        if match:
+            prefixed_match = self._make_key(match)
+        else:
+            prefixed_match = f"{self._key_prefix}*"
+
+        async for key in self._redis.scan_iter(match=prefixed_match, count=count, **kwargs):
+            # Strip prefix from yielded keys
+            yield self._extract_original_key(key)
+
+    async def memory_usage(self, key: str, **kwargs) -> Optional[int]:
+        """Get memory usage for key with project isolation."""
+        return await self._redis.memory_usage(self._make_key(key), **kwargs)
+
+    async def eval(self, script: str, numkeys: int, *keys_and_args, **kwargs):
+        """Execute Lua script with project isolation and NOSCRIPT fallback."""
+        from redis.exceptions import NoScriptError
+
+        # Split arguments into keys and args
+        keys = list(keys_and_args[:numkeys])
+        args = list(keys_and_args[numkeys:])
+
+        # Prefix all keys
+        prefixed_keys = [self._make_key(key) for key in keys]
+
+        # Combine back
+        all_args = prefixed_keys + args
+
+        try:
+            # Try evalsha first (script should be pre-loaded)
+            return await self._redis.evalsha(script, numkeys, *all_args, **kwargs)
+        except NoScriptError:
+            # Fallback to eval
+            return await self._redis.eval(script, numkeys, *all_args, **kwargs)
+
     # Block unknown methods to preserve project isolation
     def __getattr__(self, name):
         # Disallow arbitrary delegation to preserve project isolation
         raise RedisProjectIsolationException(
             message=f"Method '{name}' is not allowed via ProjectIsolatedRedisClient. "
-            f"Add an explicit wrapper that enforces key prefixing."
+            f"Add an explicit wrapper that enforces key prefixing.",
+            project_id=self._project_id
         )
 
 

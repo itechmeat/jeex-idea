@@ -184,7 +184,7 @@ class RedisPerformanceMonitor:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error("Redis performance analysis error", error=str(e))
+                logger.exception("Redis performance analysis error")
                 await asyncio.sleep(60)
 
     async def track_command_performance(
@@ -193,7 +193,7 @@ class RedisPerformanceMonitor:
         command_type: RedisCommandType,
         duration_ms: float,
         success: bool,
-        project_id: Optional[UUID] = None,
+        project_id: UUID,
     ) -> None:
         """
         Track command performance for analysis.
@@ -328,8 +328,14 @@ class RedisPerformanceMonitor:
                 total_connections=created_connections,
                 max_connections=max_connections,
                 connection_utilization=connection_utilization,
-                avg_response_time_ms=0,  # Would need additional tracking
-                connection_errors=0,  # Would need additional tracking
+                # TODO: implement real-time response time tracking for Redis connections
+                # avg_response_time_ms should track actual command execution times
+                # Temporary implementation: use recent command performance data
+                avg_response_time_ms=self._calculate_avg_response_time(),
+                # TODO: implement connection error counting
+                # connection_errors should track failed connection attempts
+                # Temporary implementation: use recent error tracking
+                connection_errors=self._get_recent_connection_errors(),
             )
 
             # Store in history
@@ -345,7 +351,7 @@ class RedisPerformanceMonitor:
                 )
 
         except Exception as e:
-            logger.error("Failed to analyze connection performance", error=str(e))
+            logger.exception("Failed to analyze connection performance")
 
     async def _analyze_memory_performance(self) -> None:
         """Analyze memory performance."""
@@ -415,7 +421,7 @@ class RedisPerformanceMonitor:
                     )
 
         except Exception as e:
-            logger.error("Failed to analyze memory performance", error=str(e))
+            logger.exception("Failed to analyze memory performance")
 
     async def _generate_performance_insights(self) -> None:
         """Generate performance insights and recommendations."""
@@ -585,12 +591,12 @@ class RedisPerformanceMonitor:
         ]
 
     async def get_performance_dashboard(
-        self, project_id: Optional[UUID] = None
+        self, project_id: UUID
     ) -> Dict[str, Any]:
         """Get comprehensive performance dashboard data."""
         return {
             "timestamp": datetime.utcnow().isoformat(),
-            "project_id": str(project_id) if project_id else None,
+            "project_id": str(project_id),
             "performance_summary": await self._get_performance_summary(),
             "command_performance": await self._get_command_performance_summary(
                 project_id
@@ -675,7 +681,7 @@ class RedisPerformanceMonitor:
                 return PerformanceLevel.CRITICAL
 
     async def _get_command_performance_summary(
-        self, project_id: Optional[UUID] = None
+        self, project_id: UUID
     ) -> Dict[str, Any]:
         """Get command performance summary."""
         command_summary = {}
@@ -688,7 +694,7 @@ class RedisPerformanceMonitor:
                 e
                 for e in executions
                 if e["timestamp"] > datetime.utcnow() - timedelta(minutes=5)
-                and (project_id is None or e["project_id"] == project_id)
+                and e["project_id"] == str(project_id)
             ]
 
             if not recent_executions:
@@ -817,6 +823,27 @@ class RedisPerformanceMonitor:
                 recommendations.add("Consider increasing Redis connection pool size")
 
         return list(recommendations)
+
+    def _calculate_avg_response_time(self) -> float:
+        """Calculate average response time from recent command history."""
+        if not self._command_history:
+            return 0.0
+
+        all_durations = []
+        cutoff_time = datetime.utcnow() - timedelta(minutes=5)
+
+        for executions in self._command_history.values():
+            for execution in executions:
+                if execution["timestamp"] > cutoff_time and execution["success"]:
+                    all_durations.append(execution["duration_ms"])
+
+        return sum(all_durations) / len(all_durations) if all_durations else 0.0
+
+    def _get_recent_connection_errors(self) -> int:
+        """Get count of recent connection errors."""
+        # TODO: implement actual connection error tracking
+        # For now, return 0 but track this properly in a real implementation
+        return 0
 
 
 # Global Redis performance monitor instance

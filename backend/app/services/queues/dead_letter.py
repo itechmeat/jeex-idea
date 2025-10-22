@@ -185,10 +185,10 @@ class DeadLetterQueue:
             return None
 
         except Exception as e:
-            logger.error(
-                f"Failed to get dead letter task {task_id} for project {project_id}: {e}"
+            logger.exception(
+                f"Failed to get dead letter task {task_id} for project {project_id}"
             )
-            return None
+            raise
 
     async def list_tasks(
         self,
@@ -262,10 +262,10 @@ class DeadLetterQueue:
             return tasks
 
         except Exception as e:
-            logger.error(
-                f"Failed to list dead letter tasks for project {project_id}: {e}"
+            logger.exception(
+                f"Failed to list dead letter tasks for project {project_id}"
             )
-            return []
+            raise
 
     async def retry_task(
         self, project_id: UUID, task_id: UUID, worker_id: Optional[str] = None
@@ -335,10 +335,10 @@ class DeadLetterQueue:
             return True
 
         except Exception as e:
-            logger.error(
-                f"Failed to retry dead letter task {task_id} for project {project_id}: {e}"
+            logger.exception(
+                f"Failed to retry dead letter task {task_id} for project {project_id}"
             )
-            return False
+            raise
 
     async def remove_task(self, project_id: UUID, task_id: UUID) -> bool:
         """
