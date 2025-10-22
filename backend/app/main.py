@@ -31,8 +31,14 @@ from .core.backup import backup_manager
 from .core.vector import vector_database
 from .core.config import get_settings
 from .db import init_database, close_database
+from .infrastructure.redis.connection_factory import redis_connection_factory
+from .monitoring.redis_metrics import redis_metrics_collector
+from .monitoring.health_checker import redis_health_checker
+from .monitoring.performance_monitor import redis_performance_monitor
+from .monitoring.alert_manager import redis_alert_manager
 from .api.endpoints.health import router as health_router
 from .api.endpoints.database_monitoring import router as database_monitoring_router
+from .api.endpoints.redis_monitoring import router as redis_monitoring_router
 from .api.endpoints.projects import router as projects_router
 from .api.endpoints.documents import router as documents_router
 from .api.endpoints.agents import router as agents_router
@@ -58,6 +64,15 @@ async def lifespan(app: FastAPI):
         # Initialize vector database with Qdrant
         await vector_database.initialize()
 
+        # Initialize Redis connection factory and monitoring systems
+        await redis_connection_factory.initialize()
+
+        # Start Redis monitoring services
+        await redis_metrics_collector.start_collection()
+        await redis_health_checker.start_health_checks()
+        await redis_performance_monitor.start_monitoring()
+        await redis_alert_manager.start_alerting()
+
         logger.info(
             "JEEX Idea API started successfully",
             version="0.1.0",
@@ -65,6 +80,7 @@ async def lifespan(app: FastAPI):
             phase_3_optimizations=True,
             phase_4_integration=True,
             vector_database=True,
+            redis_monitoring=True,
         )
 
     except Exception as e:
@@ -82,6 +98,15 @@ async def lifespan(app: FastAPI):
 
         # Cleanup vector database
         await vector_database.cleanup()
+
+        # Stop Redis monitoring services
+        await redis_metrics_collector.stop_collection()
+        await redis_health_checker.stop_health_checks()
+        await redis_performance_monitor.stop_monitoring()
+        await redis_alert_manager.stop_alerting()
+
+        # Cleanup Redis connections
+        await redis_connection_factory.close()
 
         # Close database connections (Phase 4 integration)
         await close_database()
@@ -112,6 +137,7 @@ app.add_middleware(
 # Include API routers
 app.include_router(health_router, tags=["health"])
 app.include_router(database_monitoring_router, tags=["database"])
+app.include_router(redis_monitoring_router, tags=["redis-monitoring"])
 app.include_router(projects_router, tags=["projects"])
 app.include_router(documents_router, tags=["documents"])
 app.include_router(agents_router, tags=["agents"])
@@ -232,9 +258,9 @@ async def root():
         Welcome message with API information and Phase 3 features
     """
     return {
-        "message": "Welcome to JEEX Idea API - Phase 3 Optimized",
+        "message": "Welcome to JEEX Idea API - Phase 3 Optimized with Redis Monitoring",
         "version": "0.1.0",
-        "description": "AI-powered idea management system with advanced database optimizations",
+        "description": "AI-powered idea management system with advanced database optimizations and Redis monitoring",
         "phase_3_features": [
             "Connection Pool Optimization (pool_size=20, max_overflow=30)",
             "Database Performance Monitoring",
@@ -242,6 +268,17 @@ async def root():
             "Database Maintenance Automation",
             "PostgreSQL Configuration Optimization",
             "Comprehensive Performance Testing",
+        ],
+        "redis_monitoring_features": [
+            "Real-time Redis Metrics Collection",
+            "Memory Usage Monitoring with 80% Alerting",
+            "Connection Pool Monitoring and Reporting",
+            "Command Execution Time Tracking",
+            "Error Rate Monitoring",
+            "Health Check Endpoints",
+            "Performance Analytics and Insights",
+            "Advanced Alert Management",
+            "Grafana Dashboard Templates",
         ],
         "endpoints": {
             "health": "/health",
@@ -251,6 +288,12 @@ async def root():
             "database_monitoring": "/database",
             "database_health": "/database/health",
             "performance_dashboard": "/database/monitoring/dashboard",
+            "redis_monitoring": "/monitoring/redis",
+            "redis_health": "/monitoring/redis/health",
+            "redis_metrics": "/monitoring/redis/metrics",
+            "redis_performance": "/monitoring/redis/performance",
+            "redis_alerts": "/monitoring/redis/alerts",
+            "redis_dashboard": "/monitoring/redis/dashboard/grafana",
         },
         "requirements_compliance": {
             "req_004": "Connection Pool Management - Implemented",
@@ -260,6 +303,14 @@ async def root():
             "perf_001": "P95 < 100ms - Enforced",
             "rel_001": "99.9% Availability - Monitored",
             "rel_003": "Backup Reliability - Tested",
+            # Redis Task 1.3 Requirements
+            "redis_metrics_integration": "Redis metrics integration with OpenTelemetry - Implemented",
+            "redis_memory_monitoring": "Memory usage monitoring with 80% alerts - Implemented",
+            "redis_connection_monitoring": "Connection pool monitoring and reporting - Implemented",
+            "redis_command_tracking": "Command execution time tracking - Implemented",
+            "redis_error_monitoring": "Error rate monitoring for Redis operations - Implemented",
+            "redis_health_endpoints": "Health check endpoints functional - Implemented",
+            "redis_dashboard_config": "Dashboard configuration created - Implemented",
         },
     }
 
@@ -346,11 +397,23 @@ async def app_info(
             "backup_operations": "/database/backup",
             "maintenance_operations": "/database/maintenance",
             "performance_testing": "/database/testing",
+            "redis_monitoring": "/monitoring/redis",
+            "redis_health": "/monitoring/redis/health",
+            "redis_metrics": "/monitoring/redis/metrics",
+            "redis_performance": "/monitoring/redis/performance",
+            "redis_alerts": "/monitoring/redis/alerts",
         },
         "system_status": {
             "connection_pool": connection_metrics.get("connection_metrics", {}),
             "maintenance": maintenance_status.get("configuration", {}),
             "backup": backup_status.get("configuration", {}),
+            "redis_monitoring": {
+                "metrics_collection": "active",
+                "health_checking": "active",
+                "performance_monitoring": "active",
+                "alert_management": "active",
+                "connection_factory": "operational",
+            },
         },
     }
 

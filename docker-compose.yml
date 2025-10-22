@@ -115,7 +115,7 @@ services:
           memory: 512M
           cpus: '0.5'
 
-  # Redis 6.4.0+ - Cache and Queue
+  # Redis 6.4.0+ - Cache and Queue (Domain-Driven Configuration)
   redis:
     image: redis:7.2-alpine
     container_name: jeex-redis
@@ -126,22 +126,23 @@ services:
       - "5240:6379"
     environment:
       <<: *common-variables
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production}
     volumes:
       - redis_data:/data
       - ./docker/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
-    command: redis-server /usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf --requirepass ${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production}
     healthcheck:
       <<: *common-healthcheck
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production}", "ping"]
     security_opt:
       - no-new-privileges:true
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 512M
           cpus: '0.5'
         reservations:
-          memory: 128M
+          memory: 256M
           cpus: '0.25'
 
   # Qdrant 1.15.4+ - Vector Database
@@ -234,7 +235,7 @@ services:
       QDRANT_TIMEOUT: 30
 
       # Redis configuration
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://:${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production}@redis:6379
       REDIS_MAX_CONNECTIONS: 10
 
       # API configuration
