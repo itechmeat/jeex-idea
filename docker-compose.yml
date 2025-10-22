@@ -184,29 +184,38 @@ services:
     hostname: otel-collector
     networks:
       - jeex-backend
+      - jeex-data
     ports:
       - "4317:4317"  # OTLP gRPC receiver
       - "4318:4318"  # OTLP HTTP receiver
-      - "8888:9464"  # Prometheus metrics (internal 9464 -> external 8888)
+      - "8888:8888"  # Health check endpoint
+      - "8889:8889"  # Collector metrics endpoint
+      - "1777:1777"  # Pprof endpoint for debugging
+      - "55679:55679"  # ZPages endpoint for live debugging
     environment:
       <<: *common-variables
     volumes:
       - otel_logs:/var/log/otel
-      - ./docker/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ./tmp:/tmp
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     healthcheck:
       <<: *common-healthcheck
-      test: ["CMD-SHELL", "pgrep -f 'otelcol-contrib' || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8888/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     security_opt:
       - no-new-privileges:true
     deploy:
       resources:
         limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
           memory: 256M
           cpus: '0.25'
-        reservations:
-          memory: 128M
-          cpus: '0.1'
 
   # FastAPI Backend Service
   api:

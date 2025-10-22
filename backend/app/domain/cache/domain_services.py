@@ -186,9 +186,7 @@ class CacheInvalidationService:
                 # Clean up expired project caches
                 expired_caches = await self.project_cache_repo.find_expired(project_id)
                 for cache in expired_caches:
-                    await self.project_cache_repo.delete(
-                        cache.get_key(), project_id
-                    )
+                    await self.project_cache_repo.delete(cache.get_key(), project_id)
                     cleanup_counts["project_caches"] += 1
 
                 # Clean up expired user sessions
@@ -199,9 +197,7 @@ class CacheInvalidationService:
                 # Clean up expired progress trackers
                 cleanup_counts[
                     "progress_trackers"
-                ] = await self.progress_repo.cleanup_expired(
-                    project_id, max_age_hours
-                )
+                ] = await self.progress_repo.cleanup_expired(project_id, max_age_hours)
 
                 total_cleaned = sum(cleanup_counts.values())
                 span.set_attribute("total_cleaned", total_cleaned)
@@ -267,9 +263,7 @@ class SessionManagementService:
 
             try:
                 # Invalidate existing sessions for user (single session policy)
-                await self.session_repo.invalidate_all_for_user(
-                    user_id, project_id
-                )
+                await self.session_repo.invalidate_all_for_user(user_id, project_id)
 
                 # Create new session
                 session = UserSession.create(
@@ -443,7 +437,9 @@ class SessionManagementService:
                 return count
 
             except Exception as e:
-                logger.exception(f"Failed to revoke all sessions for user {user_id}: {e}")
+                logger.exception(
+                    f"Failed to revoke all sessions for user {user_id}: {e}"
+                )
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
@@ -707,7 +703,9 @@ class RateLimitingService:
                 return status
 
             except Exception as e:
-                logger.exception(f"Failed to get rate limit status for {identifier}: {e}")
+                logger.exception(
+                    f"Failed to get rate limit status for {identifier}: {e}"
+                )
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 

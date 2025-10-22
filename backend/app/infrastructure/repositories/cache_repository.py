@@ -74,9 +74,7 @@ class RedisProjectCacheRepository(ProjectCacheRepository):
             )
 
         try:
-            async with redis_service.get_connection(
-                str(project_id)
-            ) as redis_client:
+            async with redis_service.get_connection(str(project_id)) as redis_client:
                 # Prepare cache data
                 cache_data = {
                     "project_id": str(cache.project_id),
@@ -937,7 +935,9 @@ class RedisTaskQueueRepository(TaskQueueRepository):
                 attempts=data.get("attempts", 0),
                 max_attempts=data.get("max_attempts", 3),
                 error_message=data.get("error_message"),
-                project_id=UUID(data["project_id"]),  # Required field, will fail if missing
+                project_id=UUID(
+                    data["project_id"]
+                ),  # Required field, will fail if missing
             )
             return task
 

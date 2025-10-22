@@ -20,6 +20,12 @@ from tenacity import (
     retry_if_exception_type,
 )
 
+from ....core.qdrant_telemetry import (
+    qdrant_telemetry,
+    QdrantOperationType,
+    QdrantErrorClassifier,
+)
+
 from ..domain.entities import (
     VectorPoint,
     SearchResult,
@@ -64,7 +70,10 @@ class QdrantVectorRepository(VectorRepository):
         Args:
             client: Configured QdrantClient instance
         """
-        self.client = client
+        # Instrument the client for OpenTelemetry tracing
+        from ....core.qdrant_telemetry import instrument_qdrant_client
+
+        self.client = instrument_qdrant_client(client)
         self._collection_info_cache = None
         self._cache_timestamp = None
 
@@ -77,40 +86,54 @@ class QdrantVectorRepository(VectorRepository):
         reraise=True,
     )
     async def initialize_collection(self) -> None:
-        """Initialize collection with optimal HNSW configuration."""
-        if not await self.collection_exists():
-            # Create collection with optimized HNSW configuration
-            await asyncio.to_thread(
-                self.client.create_collection,
-                collection_name=self.COLLECTION_NAME,
-                vectors_config=models.VectorParams(
-                    size=self.VECTOR_SIZE,
-                    distance=models.Distance.COSINE,
-                    hnsw_config=models.HnswConfigDiff(
-                        m=self.HNSW_M,
-                        payload_m=self.HNSW_PAYLOAD_M,
-                        ef_construct=self.HNSW_EF_CONSTRUCT,
-                        full_scan_threshold=self.FULL_SCAN_THRESHOLD,
+        """Initialize collection with optimal HNSW configuration and telemetry."""
+        async with qdrant_telemetry.trace_qdrant_operation(
+            QdrantOperationType.COLLECTION_CREATE,
+            collection_name=self.COLLECTION_NAME,
+            vector_size=self.VECTOR_SIZE,
+            distance_metric="cosine",
+            hnsw_m=self.HNSW_M,
+            hnsw_payload_m=self.HNSW_PAYLOAD_M,
+            hnsw_ef_construct=self.HNSW_EF_CONSTRUCT,
+            indexing_threshold=self.INDEXING_THRESHOLD,
+        ) as span:
+            if not await self.collection_exists():
+                # Create collection with optimized HNSW configuration
+                await asyncio.to_thread(
+                    self.client.create_collection,
+                    collection_name=self.COLLECTION_NAME,
+                    vectors_config=models.VectorParams(
+                        size=self.VECTOR_SIZE,
+                        distance=models.Distance.COSINE,
+                        hnsw_config=models.HnswConfigDiff(
+                            m=self.HNSW_M,
+                            payload_m=self.HNSW_PAYLOAD_M,
+                            ef_construct=self.HNSW_EF_CONSTRUCT,
+                            full_scan_threshold=self.FULL_SCAN_THRESHOLD,
+                        ),
                     ),
-                ),
-                optimizers_config=models.OptimizersConfigDiff(
-                    indexing_threshold=self.INDEXING_THRESHOLD
-                ),
-                replication_factor=1,  # Single node configuration
-                shard_number=1,  # Single shard for development
-            )
-            logger.info(
-                "Created collection with HNSW optimization",
-                collection_name=self.COLLECTION_NAME,
-                vector_size=self.VECTOR_SIZE,
-                hnsw_m=self.HNSW_M,
-                hnsw_payload_m=self.HNSW_PAYLOAD_M,
-                hnsw_ef_construct=self.HNSW_EF_CONSTRUCT,
-                operation="create_collection",
-            )
+                    optimizers_config=models.OptimizersConfigDiff(
+                        indexing_threshold=self.INDEXING_THRESHOLD
+                    ),
+                    replication_factor=1,  # Single node configuration
+                    shard_number=1,  # Single shard for development
+                )
 
-        # Create required indexes
-        await self.create_indexes()
+                span.set_attribute("qdrant.collection_created", True)
+                logger.info(
+                    "Created collection with HNSW optimization",
+                    collection_name=self.COLLECTION_NAME,
+                    vector_size=self.VECTOR_SIZE,
+                    hnsw_m=self.HNSW_M,
+                    hnsw_payload_m=self.HNSW_PAYLOAD_M,
+                    hnsw_ef_construct=self.HNSW_EF_CONSTRUCT,
+                    operation="create_collection",
+                )
+            else:
+                span.set_attribute("qdrant.collection_existed", True)
+
+            # Create required indexes
+            await self.create_indexes()
 
     async def collection_exists(self) -> bool:
         """Check if collection exists."""
@@ -151,50 +174,43 @@ class QdrantVectorRepository(VectorRepository):
         wait=wait_exponential(multiplier=1, min=2, max=8),
     )
     async def create_indexes(self) -> None:
-        """Create required payload indexes for efficient filtering."""
-        try:
-            # Index project_id for project isolation
-            await asyncio.to_thread(
-                self.client.create_payload_index,
-                collection_name=self.COLLECTION_NAME,
-                field_name="project_id",
-                field_schema=models.PayloadSchemaType.KEYWORD,
-            )
+        """Create required payload indexes for efficient filtering with telemetry."""
+        async with qdrant_telemetry.trace_qdrant_operation(
+            QdrantOperationType.INDEX_CREATE, collection_name=self.COLLECTION_NAME
+        ) as span:
+            indexes_to_create = [
+                ("project_id", models.PayloadSchemaType.KEYWORD, "project isolation"),
+                ("language", models.PayloadSchemaType.KEYWORD, "language isolation"),
+                ("type", models.PayloadSchemaType.KEYWORD, "document type filtering"),
+                ("created_at", models.PayloadSchemaType.DATETIME, "temporal queries"),
+                ("importance", models.PayloadSchemaType.FLOAT, "importance filtering"),
+            ]
 
-            # Index language for language isolation
-            await asyncio.to_thread(
-                self.client.create_payload_index,
-                collection_name=self.COLLECTION_NAME,
-                field_name="language",
-                field_schema=models.PayloadSchemaType.KEYWORD,
-            )
+            for field_name, field_schema, description in indexes_to_create:
+                try:
+                    await asyncio.to_thread(
+                        self.client.create_payload_index,
+                        collection_name=self.COLLECTION_NAME,
+                        field_name=field_name,
+                        field_schema=field_schema,
+                    )
+                    span.set_attribute(f"qdrant.index_created_{field_name}", True)
+                    logger.debug(
+                        "Created payload index",
+                        collection_name=self.COLLECTION_NAME,
+                        field_name=field_name,
+                        field_schema=str(field_schema),
+                        description=description,
+                        operation="create_index",
+                    )
+                except Exception as e:
+                    span.set_attribute(f"qdrant.index_failed_{field_name}", True)
+                    span.set_attribute(f"qdrant.index_error_{field_name}", str(e))
+                    raise RuntimeError(
+                        f"Failed to create payload index for {field_name}: {e}"
+                    ) from e
 
-            # Index document type for type filtering
-            await asyncio.to_thread(
-                self.client.create_payload_index,
-                collection_name=self.COLLECTION_NAME,
-                field_name="type",
-                field_schema=models.PayloadSchemaType.KEYWORD,
-            )
-
-            # Index created_at for temporal queries
-            await asyncio.to_thread(
-                self.client.create_payload_index,
-                collection_name=self.COLLECTION_NAME,
-                field_name="created_at",
-                field_schema=models.PayloadSchemaType.DATETIME,
-            )
-
-            # Index importance for importance-based filtering
-            await asyncio.to_thread(
-                self.client.create_payload_index,
-                collection_name=self.COLLECTION_NAME,
-                field_name="importance",
-                field_schema=models.PayloadSchemaType.FLOAT,
-            )
-
-        except Exception as e:
-            raise RuntimeError(f"Failed to create payload indexes: {e}") from e
+            span.set_attribute("qdrant.total_indexes_created", len(indexes_to_create))
 
     async def validate_schema(self) -> List[str]:
         """Validate collection schema matches expected configuration."""
@@ -281,7 +297,7 @@ class QdrantVectorRepository(VectorRepository):
 
     async def upsert_points(self, project_id: UUID, points: List[VectorPoint]) -> None:
         """
-        Store or update vector points in batches with mandatory project isolation.
+        Store or update vector points in batches with mandatory project isolation and telemetry.
 
         CRITICAL: Validates that all points belong to the specified project_id.
         """
@@ -311,29 +327,62 @@ class QdrantVectorRepository(VectorRepository):
                     "Cross-project upsert is forbidden."
                 )
 
-        # Process in batches to avoid timeouts
-        for i in range(0, len(points), self.MAX_BATCH_SIZE):
-            batch = points[i : i + self.MAX_BATCH_SIZE]
-            qdrant_points = []
+        # Enhanced telemetry for upsert operation
+        total_points = len(points)
+        document_types = list(set(point.document_type.value for point in points))
 
-            for point in batch:
-                qdrant_point = models.PointStruct(
-                    id=str(point.id),
-                    vector=point.vector.to_list() if point.vector else None,
-                    payload=point.get_qdrant_payload(),
-                )
-                qdrant_points.append(qdrant_point)
+        async with qdrant_telemetry.trace_qdrant_operation(
+            QdrantOperationType.UPSERT,
+            collection_name=self.COLLECTION_NAME,
+            total_points=total_points,
+            document_types=document_types,
+            vector_size=self.VECTOR_SIZE,
+        ) as span:
+            # Add project context to span
+            qdrant_telemetry.add_project_context(
+                span, project_id, str(points[0].language)
+            )
 
-            try:
-                await asyncio.to_thread(
-                    self.client.upsert,
-                    collection_name=self.COLLECTION_NAME,
-                    points=qdrant_points,
-                )
-            except Exception as e:
-                raise RuntimeError(
-                    f"Failed to upsert batch {i // self.MAX_BATCH_SIZE + 1}: {e}"
-                ) from e
+            # Record batch metrics
+            qdrant_telemetry.record_batch_metrics(
+                QdrantOperationType.UPSERT, total_points
+            )
+
+            # Process in batches to avoid timeouts
+            for i in range(0, len(points), self.MAX_BATCH_SIZE):
+                batch = points[i : i + self.MAX_BATCH_SIZE]
+                batch_number = i // self.MAX_BATCH_SIZE + 1
+                qdrant_points = []
+
+                for point in batch:
+                    qdrant_point = models.PointStruct(
+                        id=str(point.id),
+                        vector=point.vector.to_list() if point.vector else None,
+                        payload=point.get_qdrant_payload(),
+                    )
+                    qdrant_points.append(qdrant_point)
+
+                try:
+                    await asyncio.to_thread(
+                        self.client.upsert,
+                        collection_name=self.COLLECTION_NAME,
+                        points=qdrant_points,
+                    )
+
+                    # Record batch completion metrics
+                    span.set_attribute(f"qdrant.batch_{batch_number}_size", len(batch))
+
+                except Exception as e:
+                    span.set_attribute("qdrant.failed_batch", batch_number)
+                    span.set_attribute("qdrant.failed_batch_size", len(batch))
+                    raise RuntimeError(
+                        f"Failed to upsert batch {batch_number}: {e}"
+                    ) from e
+
+            span.set_attribute(
+                "qdrant.total_batches_processed",
+                (total_points + self.MAX_BATCH_SIZE - 1) // self.MAX_BATCH_SIZE,
+            )
 
     async def get_point_by_id(
         self, point_id: UUID, project_id: UUID
@@ -390,7 +439,7 @@ class QdrantVectorRepository(VectorRepository):
         importance_min: Optional[float] = None,
     ) -> List[SearchResult]:
         """
-        Search for similar vectors with mandatory filtering.
+        Search for similar vectors with mandatory filtering and enhanced telemetry.
 
         CRITICAL: All searches MUST include project_id and language filters.
         No client can bypass these security filters.
@@ -435,64 +484,99 @@ class QdrantVectorRepository(VectorRepository):
         # Create mandatory filter
         search_filter = models.Filter(must=filter_conditions)
 
-        try:
-            # Execute search with timeout
-            search_result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.client.search,
-                    collection_name=self.COLLECTION_NAME,
-                    query_vector=query_vector.to_list(),
-                    query_filter=search_filter,
-                    limit=limit,
-                    score_threshold=score_threshold,
-                    with_payload=True,
-                    with_vectors=False,  # Don't need vectors in results
-                ),
-                timeout=5.0,  # 5 second timeout
+        # Enhanced telemetry for search operation
+        query_params = {
+            "limit": limit,
+            "score_threshold": score_threshold,
+            "document_type": document_type.value if document_type else None,
+            "importance_min": importance_min,
+            "collection_name": self.COLLECTION_NAME,
+            "vector_size": len(query_vector),
+        }
+
+        async with qdrant_telemetry.trace_qdrant_operation(
+            QdrantOperationType.SEARCH, **query_params
+        ) as span:
+            # Add project context to span
+            qdrant_telemetry.add_project_context(
+                span, context.project_id, str(context.language)
             )
 
-            # Convert to SearchResult domain objects
-            results = []
-            for rank, scored_point in enumerate(search_result, 1):
-                # Double-check that results match filter (defense in depth)
-                payload = scored_point.payload
-                if payload.get("project_id") != str(context.project_id) or payload.get(
-                    "language"
-                ) != str(context.language):
-                    # Log security alert and skip this result
-                    logger.warning(
-                        "SECURITY ALERT: Filter bypass detected in search result",
-                        point_id=scored_point.id,
-                        expected_project_id=str(context.project_id),
-                        actual_project_id=payload.get("project_id"),
-                        expected_language=str(context.language),
-                        actual_language=payload.get("language"),
-                        security_event="filter_bypass",
-                        operation="search_validation",
+            try:
+                # Execute search with timeout
+                search_result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.client.search,
+                        collection_name=self.COLLECTION_NAME,
+                        query_vector=query_vector.to_list(),
+                        query_filter=search_filter,
+                        limit=limit,
+                        score_threshold=score_threshold,
+                        with_payload=True,
+                        with_vectors=False,  # Don't need vectors in results
+                    ),
+                    timeout=5.0,  # 5 second timeout
+                )
+
+                # Convert to SearchResult domain objects
+                results = []
+                scores = []  # Track scores for metrics
+                for rank, scored_point in enumerate(search_result, 1):
+                    # Double-check that results match filter (defense in depth)
+                    payload = scored_point.payload
+                    if payload.get("project_id") != str(
+                        context.project_id
+                    ) or payload.get("language") != str(context.language):
+                        # Log security alert and skip this result
+                        logger.warning(
+                            "SECURITY ALERT: Filter bypass detected in search result",
+                            point_id=scored_point.id,
+                            expected_project_id=str(context.project_id),
+                            actual_project_id=payload.get("project_id"),
+                            expected_language=str(context.language),
+                            actual_language=payload.get("language"),
+                            security_event="filter_bypass",
+                            operation="search_validation",
+                        )
+                        continue
+
+                    # Validate score is within expected range
+                    score = min(max(scored_point.score, 0.0), 1.0)  # Clamp to [0, 1]
+                    scores.append(score)
+
+                    point = VectorPoint.from_qdrant_search_result(
+                        point_id=str(scored_point.id),
+                        payload=scored_point.payload,
                     )
-                    continue
 
-                # Validate score is within expected range
-                score = min(max(scored_point.score, 0.0), 1.0)  # Clamp to [0, 1]
+                    result = SearchResult(
+                        point=point,
+                        score=score,
+                        rank=rank,
+                    )
+                    results.append(result)
 
-                point = VectorPoint.from_qdrant_search_result(
-                    point_id=str(scored_point.id),
-                    payload=scored_point.payload,
+                # Record search-specific metrics
+                qdrant_telemetry.record_search_metrics(
+                    QdrantOperationType.SEARCH, len(results), scores, query_params
                 )
 
-                result = SearchResult(
-                    point=point,
-                    score=score,
-                    rank=rank,
-                )
-                results.append(result)
+                # Add span attributes for results
+                span.set_attribute("qdrant.results_found", len(results))
+                span.set_attribute("qdrant.results_returned", len(results))
+                if scores:
+                    span.set_attribute("qdrant.avg_score", sum(scores) / len(scores))
+                    span.set_attribute("qdrant.max_score", max(scores))
+                    span.set_attribute("qdrant.min_score", min(scores))
 
-            return results
+                return results
 
-        except asyncio.TimeoutError as e:
-            raise TimeoutError(f"Search query timed out after 5 seconds") from e
-        except Exception as e:
-            raise RuntimeError(f"Search failed: {e}") from e
+            except asyncio.TimeoutError as e:
+                span.set_attribute("error.timeout", "5s")
+                raise TimeoutError(f"Search query timed out after 5 seconds") from e
+            except Exception as e:
+                # Error handling is already done by the telemetry wrapper
+                raise RuntimeError(f"Search failed: {e}") from e
 
     async def delete_points(self, point_ids: List[UUID], project_id: UUID) -> None:
         """

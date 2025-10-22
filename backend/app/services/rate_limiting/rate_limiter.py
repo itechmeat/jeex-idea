@@ -433,9 +433,7 @@ class RateLimiter:
 
             except RedisConnectionException as e:
                 logger.error(f"Redis connection error during rate limit check: {e}")
-                span.set_status(
-                    Status(StatusCode.ERROR, "Redis connection failed")
-                )
+                span.set_status(Status(StatusCode.ERROR, "Redis connection failed"))
 
                 # Fail open - allow request if Redis is unavailable
                 return RateLimitResult(
@@ -568,9 +566,7 @@ class RateLimiter:
             logger.error(f"Failed to reset rate limit for {identifier}: {e}")
             return False
 
-    async def get_rate_limit_metrics(
-        self, project_id: UUID
-    ) -> Dict[str, Any]:
+    async def get_rate_limit_metrics(self, project_id: UUID) -> Dict[str, Any]:
         """
         Get rate limiting metrics for monitoring.
 
@@ -585,9 +581,7 @@ class RateLimiter:
             raise ValueError("project_id is required")
 
         try:
-            async with self._redis_factory.get_connection(
-                project_id
-            ) as redis_client:
+            async with self._redis_factory.get_connection(project_id) as redis_client:
                 pattern = "rate_limit:*"
                 keys = []
 
@@ -618,16 +612,13 @@ class RateLimiter:
                             metrics["limits_by_type"].get(limit_type, 0) + 1
                         )
 
-                # Get memory usage per key (calling memory_usage individually)
+                # Get memory usage per key using public interface
                 if keys:
                     total_memory = 0
                     for key in keys:
                         try:
-                            # Need to call on underlying redis client with prefixed key
-                            prefixed_key = redis_client._make_key(key)
-                            mem = await redis_client._redis.memory_usage(
-                                prefixed_key
-                            )
+                            # Use public memory_usage method which handles key prefixing
+                            mem = await redis_client.memory_usage(key)
                             if mem is not None:
                                 total_memory += mem
                         except Exception as e:

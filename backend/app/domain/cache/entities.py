@@ -384,7 +384,9 @@ class Progress:
             raise ValueError("Current step cannot be negative")
 
     @classmethod
-    def create(cls, correlation_id: UUID, total_steps: int, project_id: UUID) -> "Progress":
+    def create(
+        cls, correlation_id: UUID, total_steps: int, project_id: UUID
+    ) -> "Progress":
         """Create new progress tracker.
 
         Args:
@@ -395,7 +397,11 @@ class Progress:
         Returns:
             New Progress instance
         """
-        return cls(correlation_id=correlation_id, total_steps=total_steps, project_id=project_id)
+        return cls(
+            correlation_id=correlation_id,
+            total_steps=total_steps,
+            project_id=project_id,
+        )
 
     def update_step(self, step: int, message: str) -> None:
         """Update current step with message."""
