@@ -655,3 +655,29 @@ docs: ## Open documentation (TODO)
 	@echo "$(YELLOW)TODO: Open documentation$(RESET)"
 	@echo "This will serve documentation locally"
 
+##@ Telemetry Management
+
+telemetry-cleanup: ## Run telemetry cleanup manually
+	@echo "$(YELLOW)Running telemetry cleanup...$(RESET)"
+	@./scripts/cleanup_telemetry.sh
+
+telemetry-setup: ## Setup automatic telemetry cleanup (cron job)
+	@echo "$(YELLOW)Setting up automatic telemetry cleanup...$(RESET)"
+	@./scripts/setup_telemetry_cron.sh
+
+telemetry-status: ## Show telemetry files status
+	@echo "$(YELLOW)Telemetry files status:$(RESET)"
+	@if [ -f ./tmp/telemetry.json ]; then \
+		SIZE_BYTES=$$(stat -f%z ./tmp/telemetry.json 2>/dev/null || stat -c%s ./tmp/telemetry.json 2>/dev/null || ls -ln ./tmp/telemetry.json 2>/dev/null | awk '{print $$5}' || echo "0"); \
+		SIZE_KB=$$(echo "$$SIZE_BYTES" | awk '{printf "%.0f", $$1/1024}'); \
+		if [ "$$SIZE_KB" -lt 1024 ]; then \
+			echo "📊 telemetry.json: $${SIZE_KB}KB"; \
+		else \
+			SIZE_MB=$$(echo "$$SIZE_BYTES" | awk '{printf "%.0f", $$1/1024/1024}'); \
+			echo "📊 telemetry.json: $${SIZE_MB}MB"; \
+		fi; \
+	else \
+		echo "ℹ️  No telemetry files found"; \
+	fi
+	@echo "📁 Total telemetry directory size: $$(du -sh ./tmp 2>/dev/null | cut -f1 || echo "0B")"
+

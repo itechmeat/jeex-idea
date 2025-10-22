@@ -93,7 +93,9 @@ class CacheManager:
 
             try:
                 health_status = (
-                    await self.health_service.perform_comprehensive_health_check(project_id)
+                    await self.health_service.perform_comprehensive_health_check(
+                        project_id
+                    )
                 )
 
                 # Add cache manager specific information
@@ -433,7 +435,11 @@ class CacheManager:
     # Rate Limiting Operations
 
     async def check_rate_limit(
-        self, identifier: str, limit_type: str, config: RateLimitConfig, project_id: UUID
+        self,
+        identifier: str,
+        limit_type: str,
+        config: RateLimitConfig,
+        project_id: UUID,
     ) -> Dict[str, Any]:
         """
         Check rate limit for identifier.
@@ -485,7 +491,12 @@ class CacheManager:
                 }
 
     async def get_rate_limit_status(
-        self, identifier: str, limit_type: str, window: RateLimitWindow, limit: int, project_id: UUID
+        self,
+        identifier: str,
+        limit_type: str,
+        window: RateLimitWindow,
+        limit: int,
+        project_id: UUID,
     ) -> Dict[str, Any]:
         """
         Get current rate limit status without incrementing.
@@ -571,7 +582,9 @@ class CacheManager:
             logger.error(f"Failed to update progress for {correlation_id}: {e}")
             return False
 
-    async def increment_progress(self, correlation_id: UUID, message: str, project_id: UUID) -> bool:
+    async def increment_progress(
+        self, correlation_id: UUID, message: str, project_id: UUID
+    ) -> bool:
         """
         Increment progress by one step.
 
@@ -598,7 +611,10 @@ class CacheManager:
             return False
 
     async def complete_progress(
-        self, correlation_id: UUID, message: str = "Operation completed", project_id: UUID = None
+        self,
+        correlation_id: UUID,
+        project_id: UUID,
+        message: str = "Operation completed",
     ) -> bool:
         """
         Mark progress as completed.
@@ -611,19 +627,19 @@ class CacheManager:
         Returns:
             True if progress completed successfully
         """
-        if project_id is None:
-            raise ValueError("project_id is required for progress operations")
-
         try:
             return await self.repository.progress.complete_progress(
                 correlation_id, project_id, message
             )
 
         except Exception as e:
+            # TODO: HIGH PRIORITY - Improve exception handling to preserve stack traces using exception chaining
             logger.error(f"Failed to complete progress for {correlation_id}: {e}")
             return False
 
-    async def fail_progress(self, correlation_id: UUID, project_id: UUID, error_message: str) -> bool:
+    async def fail_progress(
+        self, correlation_id: UUID, project_id: UUID, error_message: str
+    ) -> bool:
         """
         Mark progress as failed.
 
@@ -644,7 +660,9 @@ class CacheManager:
             logger.error(f"Failed to fail progress for {correlation_id}: {e}")
             return False
 
-    async def get_progress(self, correlation_id: UUID, project_id: UUID) -> Optional[Dict[str, Any]]:
+    async def get_progress(
+        self, correlation_id: UUID, project_id: UUID
+    ) -> Optional[Dict[str, Any]]:
         """
         Get current progress for operation.
 

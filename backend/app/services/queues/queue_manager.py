@@ -520,7 +520,11 @@ class QueueManager:
             raise ValueError("project_id is required to complete task")
 
         return await self._update_task_status(
-            task_id, TaskStatus.COMPLETED, project_id, result=result, worker_id=worker_id
+            task_id,
+            TaskStatus.COMPLETED,
+            project_id,
+            result=result,
+            worker_id=worker_id,
         )
 
     async def fail_task(
@@ -564,7 +568,11 @@ class QueueManager:
                 # Requeue task with exponential backoff
                 await self._retry_task(task_id, current_attempts, project_id)
                 return await self._update_task_status(
-                    task_id, TaskStatus.RETRYING, project_id, error=error, worker_id=worker_id
+                    task_id,
+                    TaskStatus.RETRYING,
+                    project_id,
+                    error=error,
+                    worker_id=worker_id,
                 )
 
         # Mark as failed (no more retries)
@@ -615,7 +623,9 @@ class QueueManager:
 
         return await self._update_task_status(task_id, TaskStatus.CANCELLED, project_id)
 
-    async def get_task_status(self, task_id: UUID, project_id: UUID) -> Optional[Dict[str, Any]]:
+    async def get_task_status(
+        self, task_id: UUID, project_id: UUID
+    ) -> Optional[Dict[str, Any]]:
         """
         Get current task status.
 
@@ -658,7 +668,9 @@ class QueueManager:
             logger.error(f"Failed to get task status for {task_id}: {e}")
             return None
 
-    async def get_task_data(self, task_id: UUID, project_id: UUID) -> Optional[TaskData]:
+    async def get_task_data(
+        self, task_id: UUID, project_id: UUID
+    ) -> Optional[TaskData]:
         """
         Get task data.
 
@@ -762,7 +774,9 @@ class QueueManager:
             logger.error(f"Failed to get queue stats for {task_type}: {e}")
             return {"error": str(e), "timestamp": datetime.utcnow().isoformat()}
 
-    async def cleanup_expired_tasks(self, project_id: UUID, max_age_hours: int = 24) -> int:
+    async def cleanup_expired_tasks(
+        self, project_id: UUID, max_age_hours: int = 24
+    ) -> int:
         """
         Clean up expired task data.
 
@@ -786,15 +800,15 @@ class QueueManager:
             )
 
             # Use repository method with project_id
-            return await queue_repository.cleanup_expired_tasks(project_id, max_age_hours)
+            return await queue_repository.cleanup_expired_tasks(
+                project_id, max_age_hours
+            )
 
         except Exception as e:
             logger.error(f"Failed to cleanup expired tasks: {e}")
             return 0
 
-    async def get_all_queue_stats(
-        self, project_id: UUID
-    ) -> Dict[str, Any]:
+    async def get_all_queue_stats(self, project_id: UUID) -> Dict[str, Any]:
         """
         Get statistics for all queues.
 

@@ -37,6 +37,8 @@ opentelemetry-instrumentation==0.50b0
 opentelemetry-instrumentation-fastapi==0.50b0
 opentelemetry-instrumentation-sqlalchemy==0.50b0
 opentelemetry-instrumentation-redis==0.50b0
+opentelemetry-instrumentation-httpx==0.50b0
+opentelemetry-instrumentation-requests==0.50b0
 opentelemetry-exporter-otlp==1.29.0
 opentelemetry-exporter-otlp-proto-http==1.29.0
 
@@ -62,4 +64,5 @@ aiosqlite==0.21.0
 
 # Security and validation
 cryptography==46.0.3
+email-validator==2.2.0
 

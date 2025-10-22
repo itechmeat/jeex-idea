@@ -298,7 +298,9 @@ class TestCacheManager:
             "check_rate_limit",
             return_value=mock_result,
         ) as mock_check:
-            result = await cache_manager.check_rate_limit(identifier, "user", config, project_id)
+            result = await cache_manager.check_rate_limit(
+                identifier, "user", config, project_id
+            )
 
             mock_check.assert_called_once_with(identifier, "user", config, project_id)
             assert result["allowed"] is True
@@ -324,7 +326,9 @@ class TestCacheManager:
             "check_rate_limit",
             return_value=mock_result,
         ) as mock_check:
-            result = await cache_manager.check_rate_limit(identifier, "user", config, project_id)
+            result = await cache_manager.check_rate_limit(
+                identifier, "user", config, project_id
+            )
 
             mock_check.assert_called_once_with(identifier, "user", config, project_id)
             assert result["allowed"] is False
@@ -342,7 +346,9 @@ class TestCacheManager:
             "check_rate_limit",
             side_effect=Exception("Service unavailable"),
         ) as mock_check:
-            result = await cache_manager.check_rate_limit(identifier, "user", config, project_id)
+            result = await cache_manager.check_rate_limit(
+                identifier, "user", config, project_id
+            )
 
             mock_check.assert_called_once()
             # Should fail open - allow request
@@ -374,7 +380,9 @@ class TestCacheManager:
                 identifier, "user", window, limit, project_id
             )
 
-            mock_status.assert_called_once_with(identifier, "user", window, limit, project_id)
+            mock_status.assert_called_once_with(
+                identifier, "user", window, limit, project_id
+            )
             assert result["current_count"] == 25
             assert result["remaining_requests"] == 75
 
@@ -409,9 +417,13 @@ class TestCacheManager:
         with patch.object(
             cache_manager.repository.progress, "update_progress", return_value=True
         ) as mock_update:
-            result = await cache_manager.update_progress(correlation_id, step, message, project_id)
+            result = await cache_manager.update_progress(
+                correlation_id, step, message, project_id
+            )
 
-            mock_update.assert_called_once_with(correlation_id, step, message, project_id)
+            mock_update.assert_called_once_with(
+                correlation_id, step, message, project_id
+            )
             assert result is True
 
     @pytest.mark.asyncio
@@ -431,10 +443,14 @@ class TestCacheManager:
             with patch.object(
                 cache_manager.repository.progress, "update_progress", return_value=True
             ) as mock_update:
-                result = await cache_manager.increment_progress(correlation_id, message, project_id)
+                result = await cache_manager.increment_progress(
+                    correlation_id, message, project_id
+                )
 
                 mock_find.assert_called_once_with(correlation_id, project_id)
-                mock_update.assert_called_once_with(correlation_id, 3, message, project_id)
+                mock_update.assert_called_once_with(
+                    correlation_id, 3, message, project_id
+                )
                 assert result is True
 
     @pytest.mark.asyncio
@@ -447,7 +463,9 @@ class TestCacheManager:
         with patch.object(
             cache_manager.repository.progress, "complete_progress", return_value=True
         ) as mock_complete:
-            result = await cache_manager.complete_progress(correlation_id, message, project_id)
+            result = await cache_manager.complete_progress(
+                correlation_id, message, project_id
+            )
 
             mock_complete.assert_called_once_with(correlation_id, message, project_id)
             assert result is True
@@ -462,7 +480,9 @@ class TestCacheManager:
         with patch.object(
             cache_manager.repository.progress, "fail_progress", return_value=True
         ) as mock_fail:
-            result = await cache_manager.fail_progress(correlation_id, project_id, error_message)
+            result = await cache_manager.fail_progress(
+                correlation_id, project_id, error_message
+            )
 
             mock_fail.assert_called_once_with(correlation_id, project_id, error_message)
             assert result is True

@@ -8,6 +8,12 @@
 .env.prod
 .env.production
 
+# Temporary and telemetry files (NEVER commit these!)
+/tmp/
+*.telemetry.json
+telemetry.json*
+otel-*.json
+
 # Additional secret files
 *.pem
 *.key
@@ -100,6 +106,3 @@ playwright-report/
 # Review reports (generated dynamically)
 reviews/*
 !reviews/README.md
-
-# AI assistant local settings
-.ai/settings.local.json

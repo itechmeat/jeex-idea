@@ -590,9 +590,7 @@ class RedisPerformanceMonitor:
             insight for insight in self._insights if insight.timestamp > cutoff_time
         ]
 
-    async def get_performance_dashboard(
-        self, project_id: UUID
-    ) -> Dict[str, Any]:
+    async def get_performance_dashboard(self, project_id: UUID) -> Dict[str, Any]:
         """Get comprehensive performance dashboard data."""
         return {
             "timestamp": datetime.utcnow().isoformat(),

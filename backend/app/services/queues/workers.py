@@ -182,13 +182,17 @@ class QueueWorker:
                 async with self._task_semaphore:
                     await self._execute_task(task_data)
                     self._stats["tasks_completed"] += 1
-                    span.set_status(Status(StatusCode.OK, f"Task {task_id} completed successfully"))
+                    span.set_status(
+                        Status(StatusCode.OK, f"Task {task_id} completed successfully")
+                    )
 
             except Exception as e:
                 logger.error(f"Task {task_id} failed in worker {self.worker_id}: {e}")
                 await self._handle_task_failure(task_data, str(e))
                 self._stats["tasks_failed"] += 1
-                span.set_status(Status(StatusCode.ERROR, f"Task {task_id} failed: {str(e)}"))
+                span.set_status(
+                    Status(StatusCode.ERROR, f"Task {task_id} failed: {str(e)}")
+                )
 
             finally:
                 self._current_tasks.discard(task_id)
@@ -208,7 +212,10 @@ class QueueWorker:
 
             # Mark task as completed
             await queue_manager.complete_task(
-                task_id=task_data.task_id, project_id=task_data.project_id, result=result, worker_id=self.worker_id
+                task_id=task_data.task_id,
+                project_id=task_data.project_id,
+                result=result,
+                worker_id=self.worker_id,
             )
 
             logger.debug(f"Task {task_data.task_id} completed successfully")
@@ -223,7 +230,9 @@ class QueueWorker:
         """Handle task failure with retry logic."""
         try:
             # Check if we should retry
-            task_status = await queue_manager.get_task_status(task_data.task_id, task_data.project_id)
+            task_status = await queue_manager.get_task_status(
+                task_data.task_id, task_data.project_id
+            )
             current_attempts = task_status.get("attempts", 0) if task_status else 0
 
             if current_attempts < task_data.max_attempts:

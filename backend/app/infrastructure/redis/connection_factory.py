@@ -79,6 +79,16 @@ class RedisConnectionFactory:
         except Exception as e:
             logger.warning(f"Failed to enable Redis OpenTelemetry instrumentation: {e}")
 
+        # Import enhanced instrumentation for integration
+        try:
+            from ...core.redis_instrumentation import redis_instrumentation
+
+            self._enhanced_instrumentation = redis_instrumentation
+            logger.info("Enhanced Redis instrumentation integrated")
+        except ImportError as e:
+            logger.warning(f"Enhanced Redis instrumentation not available: {e}")
+            self._enhanced_instrumentation = None
+
     async def initialize(self) -> None:
         """Initialize connection factory and create default pool."""
         if self._initialized:
@@ -178,7 +188,7 @@ class RedisConnectionFactory:
         except ValueError:
             raise RedisProjectIsolationException(
                 message=f"Invalid project_id format: {project_id}. Must be a valid UUID string or UUID object.",
-                project_id=str(project_id) if project_id else "invalid"
+                project_id=str(project_id) if project_id else "invalid",
             )
         await self.initialize()
 
@@ -384,7 +394,56 @@ class RedisConnectionFactory:
                 }
                 for pool_key, pool in self._pools.items()
             },
+            "enhanced_instrumentation": self._enhanced_instrumentation is not None,
         }
+
+    async def get_enhanced_metrics(self) -> Dict[str, Any]:
+        """Get enhanced metrics from instrumentation integration."""
+        base_metrics = self.get_metrics()
+
+        if self._enhanced_instrumentation:
+            try:
+                # Get enhanced instrumentation metrics
+                cache_performance = (
+                    self._enhanced_instrumentation.get_cache_performance_summary()
+                )
+                error_stats = self._enhanced_instrumentation.get_error_rate_stats()
+                latency_stats = (
+                    await self._enhanced_instrumentation.get_command_latency_stats()
+                )
+
+                base_metrics.update(
+                    {
+                        "cache_performance": cache_performance,
+                        "error_rates": error_stats,
+                        "command_latencies": latency_stats,
+                    }
+                )
+
+                # Get memory stats if available
+                try:
+                    async with self.get_admin_connection() as redis_client:
+                        memory_stats = (
+                            await self._enhanced_instrumentation.collect_redis_info(
+                                redis_client
+                            )
+                        )
+                        base_metrics["memory_usage"] = {
+                            "used_memory_mb": memory_stats.used_memory / 1024 / 1024,
+                            "used_memory_rss_mb": memory_stats.used_memory_rss
+                            / 1024
+                            / 1024,
+                            "max_memory_mb": memory_stats.max_memory / 1024 / 1024,
+                            "fragmentation_ratio": memory_stats.memory_fragmentation_ratio,
+                            "maxmemory_policy": memory_stats.maxmemory_policy,
+                        }
+                except Exception as e:
+                    logger.warning(f"Failed to collect memory stats: {e}")
+
+            except Exception as e:
+                logger.warning(f"Failed to get enhanced metrics: {e}")
+
+        return base_metrics
 
 
 class ProjectIsolatedRedisClient:
@@ -572,7 +631,9 @@ class ProjectIsolatedRedisClient:
         else:
             prefixed_match = f"{self._key_prefix}*"
 
-        async for key in self._redis.scan_iter(match=prefixed_match, count=count, **kwargs):
+        async for key in self._redis.scan_iter(
+            match=prefixed_match, count=count, **kwargs
+        ):
             # Strip prefix from yielded keys
             yield self._extract_original_key(key)
 
@@ -607,7 +668,7 @@ class ProjectIsolatedRedisClient:
         raise RedisProjectIsolationException(
             message=f"Method '{name}' is not allowed via ProjectIsolatedRedisClient. "
             f"Add an explicit wrapper that enforces key prefixing.",
-            project_id=self._project_id
+            project_id=self._project_id,
         )
 
 
