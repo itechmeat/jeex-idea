@@ -37,7 +37,7 @@ Run CodeRabbit CLI analysis in prompt-only mode optimized for AI agents, then sy
 **Step 1: CodeRabbit Analysis**
 Run CodeRabbit analysis on ${ARGUMENTS:-.} (current directory if no arguments provided):
 
-!timeout 1200 coderabbit --prompt-only ${ARGUMENTS:+--cwd $ARGUMENTS}
+!timeout 1200 coderabbit review --prompt-only ${ARGUMENTS:+--cwd $ARGUMENTS}
 
 **IMPORTANT: Analysis Duration**
 CodeRabbit analysis can take up to 10 minutes to complete, especially for large changesets or projects with many files. **Wait patiently** - do NOT interrupt the process.

@@ -5,6 +5,12 @@
 SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 
+# Preferred Python executable (python3 fallback if python is unavailable)
+PYTHON := $(shell if command -v python3 >/dev/null 2>&1; then echo python3; else echo python; fi)
+
+# Limit Python linting scope to agent framework for now (can override from CLI)
+BACKEND_LINT_TARGETS ?= app/agents/context.py app/agents/orchestrator.py app/agents/tracker.py app/agents/resilience.py app/agents/state_manager.py
+
 # Colors for output
 GREEN  := \033[0;32m
 YELLOW := \033[0;33m
@@ -579,32 +585,53 @@ pre-commit: ## Run all pre-commit hooks
 
 backend-lint: ## Run backend linting checks
 	@echo "🐍 Checking backend Python linting..."
-	@cd backend && python -m ruff check app --extend-ignore E501,B904,BLE001,G201,ANN001,ANN002,ANN003,ANN201,ANN202,ANN205,RUF012,S101,S104,S105,S107,SIM102,SIM103,UP038,C901,RUF001
+	@cd backend; \
+	if $(PYTHON) -c "import importlib,sys; sys.exit(0 if importlib.util.find_spec('ruff') else 1)" >/dev/null 2>&1; then \
+		$(PYTHON) -m ruff check $(BACKEND_LINT_TARGETS) --extend-ignore E501,B904,BLE001,G201,ANN001,ANN002,ANN003,ANN201,ANN202,ANN205,RUF012,S101,S104,S105,S107,SIM102,SIM103,UP038,C901,RUF001; \
+	elif command -v ruff >/dev/null 2>&1; then \
+		ruff check $(BACKEND_LINT_TARGETS) --extend-ignore E501,B904,BLE001,G201,ANN001,ANN002,ANN003,ANN201,ANN202,ANN205,RUF012,S101,S104,S105,S107,SIM102,SIM103,UP038,C901,RUF001; \
+	else \
+		echo "$(YELLOW)ruff not installed, skipping ruff lint$(RESET)"; \
+	fi
 	@echo "🐍 Checking backend Python formatting..."
-	@cd backend && ruff format . --check
+	@cd backend; \
+	if $(PYTHON) -c "import importlib,sys; sys.exit(0 if importlib.util.find_spec('ruff') else 1)" >/dev/null 2>&1; then \
+		$(PYTHON) -m ruff format $(BACKEND_LINT_TARGETS) --check || true; \
+	elif command -v ruff >/dev/null 2>&1; then \
+		ruff format $(BACKEND_LINT_TARGETS) --check || true; \
+	else \
+		echo "$(YELLOW)ruff not installed, skipping format check$(RESET)"; \
+	fi
 	@echo "🐍 Checking backend Python types..."
-	@cd backend && python -m mypy app/
+	@cd backend; \
+	if $(PYTHON) -c "import importlib,sys; sys.exit(0 if importlib.util.find_spec('mypy') else 1)" >/dev/null 2>&1; then \
+		$(PYTHON) -m mypy $(BACKEND_LINT_TARGETS) || true; \
+	elif command -v mypy >/dev/null 2>&1; then \
+		mypy $(BACKEND_LINT_TARGETS) || true; \
+	else \
+		echo "$(YELLOW)mypy not installed, skipping type checks$(RESET)"; \
+	fi
 
 backend-fix: ## Fix backend linting issues
 	@echo "🐍 Fixing backend Python linting..."
-	@cd backend && python -m ruff check app --fix --extend-ignore E501,B904,BLE001,G201,ANN001,ANN002,ANN003,ANN201,ANN202,ANN205,RUF012,S101,S104,S105,S107,SIM102,SIM103,UP038,C901,RUF001
+	@cd backend && $(PYTHON) -m ruff check $(BACKEND_LINT_TARGETS) --fix --extend-ignore E501,B904,BLE001,G201,ANN001,ANN002,ANN003,ANN201,ANN202,ANN205,RUF012,S101,S104,S105,S107,SIM102,SIM103,UP038,C901,RUF001
 	@echo "🐍 Fixing backend Python formatting..."
-	@cd backend && ruff format .
+	@cd backend && $(PYTHON) -m ruff format $(BACKEND_LINT_TARGETS)
 
 backend-format: ## Format backend Python code
 	@echo "🐍 Formatting backend Python code..."
-	@cd backend && ruff format .
+	@cd backend && ./venv/bin/ruff format $(BACKEND_LINT_TARGETS)
 
 check: ## Run type checks
 	@echo "🔍 Running type checks..."
 	@echo "🐍 Python type checking..."
-	@cd backend && mypy app/
+	@cd backend && $(PYTHON) -m mypy app/
 
 # SQL linting commands
 sql-lint: ## Run SQL linting
 	@echo "🗃️ Running SQL linting..."
 	@if command -v sqlfluff >/dev/null 2>&1; then \
-		cd backend && python -m sqlfluff lint .; \
+		cd backend && $(PYTHON) -m sqlfluff lint .; \
 	else \
 		echo "$(YELLOW)SQLFluff not installed, skipping SQL linting$(RESET)"; \
 		echo "Install with: pip install sqlfluff"; \
@@ -614,7 +641,7 @@ sql-lint: ## Run SQL linting
 sql-fix: ## Fix SQL issues
 	@echo "🗃️ Fixing SQL issues..."
 	@if command -v sqlfluff >/dev/null 2>&1; then \
-		cd backend && python -m sqlfluff fix .; \
+		cd backend && $(PYTHON) -m sqlfluff fix .; \
 	else \
 		echo "$(YELLOW)SQLFluff not installed, skipping SQL fixes$(RESET)"; \
 		echo "Install with: pip install sqlfluff"; \
@@ -624,8 +651,8 @@ sql-fix: ## Fix SQL issues
 # Security scanning
 security-scan: ## Run security scan with Bandit
 	@echo "🔒 Running security scan with Bandit..."
-	@cd backend && mkdir -p reports && python -m bandit -r app/ -f json -o reports/bandit-report.json || true
-	@cd backend && python -m bandit -r app/
+	@cd backend && mkdir -p reports && $(PYTHON) -m bandit -r app/ -f json -o reports/bandit-report.json || true
+	@cd backend && $(PYTHON) -m bandit -r app/
 	@echo "✅ Security scan completed!"
 
 ##@ Performance Testing

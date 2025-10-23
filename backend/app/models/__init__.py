@@ -209,6 +209,7 @@ class AgentExecution(Base, TimestampMixin):
     completed_at: Mapped[Optional[DateTime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # Relationships
     project: Mapped["Project"] = relationship(

@@ -3,7 +3,7 @@ Middleware modules for request/response processing.
 
 Includes:
 - Security headers (SEC-001)
-- Correlation ID tracking
+# TODO: Correlation ID tracking middleware is implemented in core.correlation
 """
 
 from .security import SecurityHeadersMiddleware
