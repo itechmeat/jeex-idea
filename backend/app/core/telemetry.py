@@ -14,6 +14,7 @@ This module provides:
 
 import os
 import logging
+from datetime import datetime
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
 
@@ -103,12 +104,12 @@ class ProjectAwareSampler:
         span_kind: Optional[Any] = None,
     ) -> SamplingResult:
         """
-        Determine if a span should be sampled.
+        Determine if a span should be sampled with input validation.
 
         Args:
             parent_context: Parent span context
-            trace_id: Trace ID
-            name: Span name
+            trace_id: Trace ID (must be non-negative)
+            name: Span name (must be non-empty string)
             kind: Span kind
             attributes: Span attributes
             span_kind: Span kind
@@ -116,8 +117,20 @@ class ProjectAwareSampler:
         Returns:
             SamplingResult with decision and attributes
 
-        TODO: MEDIUM PRIORITY - Add input validation for all parameters to prevent invalid states
+        Raises:
+            ValueError: If trace_id or name is invalid (fail fast)
         """
+        # CRITICAL: Validate inputs (fail fast - zero tolerance)
+        if not name or not isinstance(name, str):
+            raise ValueError(
+                f"Span name must be non-empty string, got {type(name).__name__}: {name!r}"
+            )
+
+        if not isinstance(trace_id, int) or trace_id < 0:
+            raise ValueError(
+                f"trace_id must be non-negative integer, got {type(trace_id).__name__}: {trace_id}"
+            )
+
         # Always sample if parent is already sampled
         if parent_context and trace.get_current_span(parent_context).is_recording():
             return SamplingResult(Decision.RECORD_AND_SAMPLE, attributes)
@@ -198,13 +211,20 @@ class OpenTelemetryManager:
         self._tracer_provider: Optional[TracerProvider] = None
         self._meter_provider: Optional[MeterProvider] = None
         self._settings = get_settings()
+        self._degradation_reasons: Dict[
+            str, Dict[str, Any]
+        ] = {}  # Track why components failed
 
     async def initialize(self) -> bool:
         """
-        Initialize OpenTelemetry instrumentation.
+        Initialize OpenTelemetry instrumentation with graceful degradation.
+
+        CRITICAL: If OTEL collector is unavailable, app continues without tracing.
+        This follows CLAUDE.md principle: "Graceful degradation maintains core
+        functionality when non-critical dependencies fail."
 
         Returns:
-            True if initialization successful, False otherwise
+            True if initialization successful, False otherwise (app continues either way)
         """
         if self._initialized:
             logger.warning("OpenTelemetry already initialized")
@@ -217,20 +237,77 @@ class OpenTelemetryManager:
             resource = self._create_resource()
 
             # Initialize tracer provider with custom sampler
-            await self._initialize_tracing(resource)
+            try:
+                await self._initialize_tracing(resource)
+            except Exception as e:
+                logger.warning(
+                    "Failed to initialize tracing, continuing without it",
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    exc_info=True,
+                )
+                # Store degradation reason for health checks and troubleshooting
+                self._degradation_reasons["tracing"] = {
+                    "component": "tracing",
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
 
             # Initialize metrics
-            await self._initialize_metrics(resource)
+            try:
+                await self._initialize_metrics(resource)
+            except Exception as e:
+                logger.warning(
+                    "Failed to initialize metrics, continuing without them",
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
+                # Store degradation reason for health checks
+                self._degradation_reasons["metrics"] = {
+                    "component": "metrics",
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
 
             # Set up auto-instrumentation
-            await self._setup_auto_instrumentation()
+            try:
+                await self._setup_auto_instrumentation()
+            except Exception as e:
+                logger.warning(
+                    "Failed to setup auto-instrumentation, continuing without it",
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
+                # Store degradation reason
+                self._degradation_reasons["auto_instrumentation"] = {
+                    "component": "auto_instrumentation",
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
 
             # Configure global propagation
-            self._configure_propagation()
+            try:
+                self._configure_propagation()
+            except Exception as e:
+                logger.warning(
+                    "Failed to configure propagation, continuing without it",
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
+                # Store degradation reason
+                self._degradation_reasons["propagation"] = {
+                    "component": "propagation",
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
 
             self._initialized = True
             logger.info(
-                "OpenTelemetry instrumentation initialized successfully",
+                "OpenTelemetry instrumentation initialized (possibly degraded mode)",
                 service_name=self._settings.OTEL_SERVICE_NAME,
                 service_version=self._settings.OTEL_SERVICE_VERSION,
                 endpoint=self._settings.OTEL_EXPORTER_OTLP_ENDPOINT,
@@ -238,11 +315,15 @@ class OpenTelemetryManager:
             return True
 
         except Exception as e:
-            logger.error(
-                f"Failed to initialize OpenTelemetry instrumentation: {str(e)}",
+            logger.warning(
+                "OpenTelemetry initialization failed, continuing WITHOUT telemetry - this is acceptable",
+                error=str(e),
                 exc_info=True,
             )
-            return False
+            # CRITICAL: Return True anyway - app should start without OTEL
+            # Observability is not core business logic
+            self._initialized = False
+            return True
 
     async def shutdown(self) -> None:
         """Gracefully shutdown OpenTelemetry components."""
@@ -564,7 +645,10 @@ class OpenTelemetryManager:
         """
         if not self._initialized:
             logger.warning("OpenTelemetry not initialized, returning no-op tracer")
-            return trace.NoOpTracer()
+            # Use NoOpTracerProvider to get a proper no-op tracer
+            from opentelemetry.trace import NoOpTracerProvider
+
+            return NoOpTracerProvider().get_tracer(name, version)
 
         return trace.get_tracer(name, version)
 
@@ -583,7 +667,10 @@ class OpenTelemetryManager:
             logger.warning(
                 "OpenTelemetry metrics not initialized, returning no-op meter"
             )
-            return metrics.NoOpMeter()
+            # Use NoOpMeterProvider to get a proper no-op meter
+            from opentelemetry.metrics import NoOpMeterProvider
+
+            return NoOpMeterProvider().get_meter(name, version)
 
         return metrics.get_meter(name, version)
 
@@ -629,10 +716,10 @@ class OpenTelemetryManager:
 
     def get_telemetry_health(self) -> Dict[str, Any]:
         """
-        Get telemetry system health status.
+        Get telemetry system health status with degradation tracking.
 
         Returns:
-            Health status dictionary
+            Health status dictionary with degradation reasons
         """
         resilience_metrics = self.get_resilience_metrics()
 
@@ -640,6 +727,13 @@ class OpenTelemetryManager:
         is_healthy = True
         status = "healthy"
         issues = []
+
+        # Check for component degradation
+        if self._degradation_reasons:
+            is_healthy = False
+            status = "degraded"
+            for component, reason in self._degradation_reasons.items():
+                issues.append(f"{component}: {reason['error_type']}")
 
         if resilience_metrics:
             if resilience_metrics.get("failed_exports", 0) > resilience_metrics.get(
@@ -663,6 +757,7 @@ class OpenTelemetryManager:
             "healthy": is_healthy,
             "initialized": self._initialized,
             "issues": issues,
+            "degradation_reasons": self._degradation_reasons,  # Include degradation context
             "resilience_metrics": resilience_metrics,
             "collector_endpoint": self._settings.OTEL_EXPORTER_OTLP_ENDPOINT,
             "service_name": self._settings.OTEL_SERVICE_NAME,

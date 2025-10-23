@@ -36,11 +36,27 @@
   - **Estimated Complexity:** Low (3 tasks)
   - **Key Outcomes:** Full OpenTelemetry infrastructure with auto-instrumentation, correlation IDs, comprehensive instrumentation for all services, security controls, and resilience mechanisms
 
-- [ ] 6. **Setup FastAPI Backend Foundation** — Initialize API service with core architecture
+- [~] 6. **Setup FastAPI Backend Foundation** — Initialize API service with core architecture
 
-  - **Scope:** FastAPI 0.116.2+ project structure, middleware, security, basic API structure, health checks, development server
+  - **Scope:** FastAPI 0.119.1+ project structure, middleware, security, basic API structure, health checks, development server
   - **Dependencies:** Stories 1-5
-  - **Estimated Complexity:** Medium (8 tasks)
+  - **Estimated Complexity:** Medium (20 tasks across 5 phases)
+  - **Status:** ⚠️ **75% Complete** - Core MVP components implemented using Chain-of-Verification (CoV) methodology
+  - **CoV Methodology Applied:**
+    - Generated 3 architectural variants (Full DDD, Minimal MVP, Pragmatic MVP)
+    - Independent verification across 25 criteria
+    - Selected Variant C "Pragmatic MVP with Scaling Path" (88% score vs 65%/35%)
+  - **Key Outcomes:**
+    - ✅ BaseRepository pattern with project isolation (SEC-002 CRITICAL)
+    - ✅ Security Headers middleware with 7 headers (SEC-001)
+    - ✅ SSE streaming service with Redis pub/sub (REQ-006)
+    - ✅ OpenTelemetry graceful degradation
+    - ✅ ADR documenting architectural decision (`adr-backend-foundation-approach.md`)
+    - ✅ Completion report with CoV analysis (`COMPLETION_REPORT.md`)
+  - **Technical Debt:** Minimal (7 SP) - Service layer, auth middleware, advanced SSE deferred with clear repayment plan
+  - **Blocker:** 🔴 API service cannot accept HTTP connections due to OTEL metrics exporter crash
+  - **Mitigation:** Disable OTEL metrics for MVP (15-30 min) OR fix OTEL collector (2-3 hours)
+  - **Recommendation:** Resolve OTEL blocker before proceeding to Story 7
 
 ## Core Agent System Stories
 

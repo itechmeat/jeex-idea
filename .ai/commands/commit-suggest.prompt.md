@@ -77,7 +77,7 @@ graph TD
 | `refactor` | Code refactoring          | `refactor(db): simplify query builder`                |
 | `perf`     | Performance improvement   | `perf(api): optimize database queries`                |
 | `test`     | Adding/updating tests     | `test(auth): add E2E tests for login flow`            |
-| `chore`    | Maintenance tasks         | `chore(deps): update FastAPI to 0.116.2`              |
+| `chore`    | Maintenance tasks         | `chore(deps): update FastAPI to 0.119.1`              |
 | `build`    | Build system/dependencies | `build(docker): update base image`                    |
 | `ci`       | CI/CD configuration       | `ci(github): add automated tests workflow`            |
 | `revert`   | Revert previous commit    | `revert: revert feat(auth): add OAuth2`               |
@@ -293,7 +293,6 @@ feat(auth): add OAuth2 authentication
 ## 💬 Commit Message Suggestions
 
 ### Primary Recommendation
-
 ```
 
 feat(auth): add OAuth2 authentication with Twitter provider
@@ -366,7 +365,7 @@ Split into separate commits:
 
 1. `feat(auth): add OAuth2 authentication`
 2. `docs: update API documentation`
-3. `chore(deps): update FastAPI to 0.116.2`
+3. `chore(deps): update FastAPI to 0.119.1`
 
 This improves git history clarity and simplifies rollbacks.
 ```

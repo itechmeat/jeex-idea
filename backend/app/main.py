@@ -32,6 +32,7 @@ from .core.vector import vector_database
 from .core.config import get_settings
 from .core.telemetry import otel_manager, get_tracer, add_span_attribute
 from .core.correlation import CorrelationIdMiddleware
+from .middleware.security import SecurityHeadersMiddleware
 from .db import init_database, close_database
 from .infrastructure.redis.connection_factory import redis_connection_factory
 from .infrastructure.redis.instrumented_redis_service import instrumented_redis_service
@@ -164,6 +165,9 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Add security headers middleware (SEC-001) - MUST be first
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Add CORS middleware
 app.add_middleware(
@@ -433,40 +437,43 @@ async def root():
 
 @app.get("/info")
 async def app_info(
-    project_id: Optional[UUID] = Query(
-        None, description="Optional project ID for project-scoped metrics"
-    ),
+    project_id: UUID = Query(..., description="Project ID for project-scoped metrics"),
 ):
     """
     Application information endpoint with Phase 3 system details.
 
+    Args:
+        project_id: REQUIRED project ID for scoped metrics (SEC-002)
+
     Returns:
         Detailed application information including Phase 3 optimization status
+
+    Raises:
+        HTTPException: If project_id validation fails
     """
+    # CRITICAL: Explicit validation (fail fast - zero tolerance)
+    if project_id is None:
+        raise HTTPException(
+            status_code=400, detail="project_id is required (cannot be None)"
+        )
+
     uptime = datetime.utcnow() - app.state.startup_time
 
-    # Get current database systems status
+    # Get current database systems status with project isolation
     try:
-        if project_id:
-            connection_metrics = await optimized_database.get_connection_metrics(
-                project_id
-            )
-        else:
-            # For general info endpoint without project_id, provide a summary message
-            connection_metrics = {
-                "message": "Project-specific metrics require project_id parameter"
-            }
+        connection_metrics = await optimized_database.get_connection_metrics(project_id)
         maintenance_status = await maintenance_manager.get_maintenance_status()
         backup_status = await backup_manager.get_backup_status()
     except Exception as e:
-        logger.warning(
+        logger.error(
             "Failed to get system status for info endpoint",
             error=str(e),
-            project_id=project_id,
+            project_id=str(project_id),
+            exc_info=True,
         )
-        connection_metrics = {"error": str(e)}
-        maintenance_status = {"error": str(e)}
-        backup_status = {"error": str(e)}
+        raise HTTPException(
+            status_code=500, detail=f"Failed to retrieve system status: {str(e)}"
+        )
 
     return {
         "name": "JEEX Idea API - Phase 3 Optimized with OpenTelemetry",

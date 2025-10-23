@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, EmailStr
 import structlog
 
 from ...core.telemetry import get_tracer, add_span_attribute
+from ...core.config import get_settings
 from ...core.security import (
     SecurityConfig,
     SecurityManager,
