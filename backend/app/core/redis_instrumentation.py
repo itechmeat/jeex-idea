@@ -28,7 +28,13 @@ from redis.exceptions import RedisError, ConnectionError, TimeoutError
 
 from opentelemetry import trace, metrics, context
 from opentelemetry.trace import Status, StatusCode, SpanKind
-from opentelemetry.metrics import Histogram, Counter, ObservableGauge, UpDownCounter
+from opentelemetry.metrics import (
+    Histogram,
+    Counter,
+    ObservableGauge,
+    UpDownCounter,
+    Observation,
+)
 from opentelemetry.semconv.trace import SpanAttributes
 from opentelemetry.semconv.metrics import MetricInstruments
 
@@ -568,43 +574,43 @@ class RedisInstrumentationEnhanced:
         """Calculate cache hit ratio for observable gauge."""
         total_cache_ops = self._cache_hits + self._cache_misses
         if total_cache_ops == 0:
-            return [0.0]
+            return [Observation(0.0)]
 
         hit_ratio = self._cache_hits / total_cache_ops
-        return [hit_ratio]
+        return [Observation(hit_ratio)]
 
     def _get_memory_usage(self, options) -> List:
         """Get current memory usage from latest stats."""
         # This would be populated by background collection
-        return [0]  # Placeholder
+        return [Observation(0)]
 
     def _get_memory_usage_percentage(self, options) -> List:
         """Get memory usage percentage."""
-        return [0]  # Placeholder
+        return [Observation(0)]
 
     def _get_memory_fragmentation_ratio(self, options) -> List:
         """Get memory fragmentation ratio."""
-        return [1.0]  # Placeholder
+        return [Observation(1.0)]
 
     def _get_allocator_allocated(self, options) -> List:
         """Get allocator allocated bytes."""
-        return [0]  # Placeholder
+        return [Observation(0)]
 
     def _get_allocator_active(self, options) -> List:
         """Get allocator active bytes."""
-        return [0]  # Placeholder
+        return [Observation(0)]
 
     def _get_active_connections(self, options) -> List:
         """Get active connections count."""
-        return [0]  # Placeholder
+        return [Observation(0)]
 
     def _get_idle_connections(self, options) -> List:
         """Get idle connections count."""
-        return [0]  # Placeholder
+        return [Observation(0)]
 
     def _get_connection_utilization(self, options) -> List:
         """Get connection utilization ratio."""
-        return [0.0]  # Placeholder
+        return [Observation(0.0)]
 
     async def collect_redis_info(self, redis_client: Redis) -> RedisMemoryStats:
         """

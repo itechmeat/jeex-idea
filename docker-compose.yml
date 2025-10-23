@@ -1,7 +1,6 @@
-version: '3.8'
+version: "3.8"
 
-x-common-variables: &common-variables
-  # Environment
+x-common-variables: &common-variables # Environment
   ENVIRONMENT: development
   # Project isolation
   PROJECT_ID: jeex-idea-dev
@@ -12,8 +11,7 @@ x-common-healthcheck: &common-healthcheck
   retries: 3
   start_period: 40s
 
-x-common-security: &common-security
-  # Resource limits for security
+x-common-security: &common-security # Resource limits for security
   mem_limit: 512m
   cpus: 0.5
   # Restart policy
@@ -110,10 +108,10 @@ services:
       resources:
         limits:
           memory: 1G
-          cpus: '1.0'
+          cpus: "1.0"
         reservations:
           memory: 512M
-          cpus: '0.5'
+          cpus: "0.5"
 
   # Redis 6.4.0+ - Cache and Queue (Domain-Driven Configuration)
   redis:
@@ -133,17 +131,24 @@ services:
     command: redis-server /usr/local/etc/redis/redis.conf --requirepass ${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production}
     healthcheck:
       <<: *common-healthcheck
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production}", "ping"]
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "-a",
+          "${REDIS_PASSWORD:-jeex_redis_secure_password_change_in_production}",
+          "ping",
+        ]
     security_opt:
       - no-new-privileges:true
     deploy:
       resources:
         limits:
           memory: 512M
-          cpus: '0.5'
+          cpus: "0.5"
         reservations:
           memory: 256M
-          cpus: '0.25'
+          cpus: "0.25"
 
   # Qdrant 1.15.4+ - Vector Database
   qdrant:
@@ -163,19 +168,18 @@ services:
       QDRANT__SERVICE__MAX_REQUEST_SIZE_MB: 32
     volumes:
       - qdrant_data:/qdrant/storage
-    healthcheck:
-      <<: *common-healthcheck
-      test: ["CMD-SHELL", "nc -z localhost 6333 || exit 1"]
+    # Note: minimal image without curl/wget - use 'make qdrant-health' for external health check
+    # No built-in healthcheck configured - service monitored via Makefile commands
     security_opt:
       - no-new-privileges:true
     deploy:
       resources:
         limits:
           memory: 512M
-          cpus: '0.5'
+          cpus: "0.5"
         reservations:
           memory: 256M
-          cpus: '0.25'
+          cpus: "0.25"
 
   # OpenTelemetry Collector
   otel-collector:
@@ -186,12 +190,12 @@ services:
       - jeex-backend
       - jeex-data
     ports:
-      - "4317:4317"  # OTLP gRPC receiver
-      - "4318:4318"  # OTLP HTTP receiver
-      - "8888:8888"  # Health check endpoint
-      - "8889:8889"  # Collector metrics endpoint
-      - "1777:1777"  # Pprof endpoint for debugging
-      - "55679:55679"  # ZPages endpoint for live debugging
+      - "4317:4317" # OTLP gRPC receiver
+      - "4318:4318" # OTLP HTTP receiver
+      - "8888:8888" # Health check endpoint
+      - "8889:8889" # Collector metrics endpoint
+      - "1777:1777" # Pprof endpoint for debugging
+      - "55679:55679" # ZPages endpoint for live debugging
     environment:
       <<: *common-variables
     volumes:
@@ -199,23 +203,18 @@ services:
       - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
       - ./tmp:/tmp
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
-    healthcheck:
-      <<: *common-healthcheck
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8888/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+    # Note: distroless image without shell - use 'make otel-health' for external health check
+    # No built-in healthcheck configured - service monitored via Makefile commands and metrics endpoint
     security_opt:
       - no-new-privileges:true
     deploy:
       resources:
         limits:
           memory: 512M
-          cpus: '0.5'
+          cpus: "0.5"
         reservations:
           memory: 256M
-          cpus: '0.25'
+          cpus: "0.25"
 
   # FastAPI Backend Service
   api:
@@ -293,10 +292,10 @@ services:
       resources:
         limits:
           memory: 1G
-          cpus: '1.0'
+          cpus: "1.0"
         reservations:
           memory: 512M
-          cpus: '0.5'
+          cpus: "0.5"
 
   # Nginx Reverse Proxy
   nginx:
@@ -321,7 +320,11 @@ services:
       - ./docker/nginx/logs:/var/log/nginx
     healthcheck:
       <<: *common-healthcheck
-      test: ["CMD-SHELL", "wget -qO- http://localhost/nginx-health >/dev/null 2>&1 || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://localhost/nginx-health >/dev/null 2>&1 || exit 1",
+        ]
     security_opt:
       - no-new-privileges:true
     depends_on:
@@ -331,7 +334,7 @@ services:
       resources:
         limits:
           memory: 128M
-          cpus: '0.25'
+          cpus: "0.25"
         reservations:
           memory: 64M
-          cpus: '0.1'
+          cpus: "0.1"

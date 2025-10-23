@@ -40,9 +40,20 @@
       "Bash(export ENVIRONMENT=development:*)",
       "Bash(./venv/bin/python:*)",
       "WebSearch(domain:github.com)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(source:*)",
+      "Bash(docker-compose exec:*)",
+      "Bash(docker inspect:*)",
+      "Bash(docker run:*)",
+      "Bash(docker-compose build:*)"
     ],
-    "deny": ["Bash(sudo:*)", "Bash(git:*)"],
-    "ask": ["Bash(chmod:*)", "Bash(mv:*)", "Bash(bash:*)"]
+    "deny": [
+      "Bash(sudo:*)"
+    ],
+    "ask": [
+      "Bash(chmod:*)",
+      "Bash(mv:*)",
+      "Bash(bash:*)"
+    ]
   }
 }

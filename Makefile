@@ -353,11 +353,11 @@ qdrant-init: ## Initialize Qdrant collection and indexes
 
 qdrant-health: ## Check Qdrant service and collection health
 	@echo "$(GREEN)Checking Qdrant health...$(RESET)"
-	@echo "$(YELLOW)Service Health:$(RESET)"
-	@curl -s http://localhost:5230/health | python3 -m json.tool || echo "Service unhealthy"
+	@echo "$(YELLOW)Service Readiness:$(RESET)"
+	@curl -sf http://localhost:5230/readyz > /dev/null 2>&1 && echo "  $(GREEN)✓ Qdrant is ready$(RESET)" || echo "  $(RED)✗ Qdrant not ready$(RESET)"
 	@echo ""
-	@echo "$(YELLOW)Collection Status:$(RESET)"
-	@curl -s http://localhost:5230/collections/jeex_memory | python3 -m json.tool || echo "Collection not found"
+	@echo "$(YELLOW)Collection Status (jeex_memory):$(RESET)"
+	@curl -s http://localhost:5230/collections/jeex_memory 2>&1 | python3 -m json.tool || echo "  $(RED)✗ Collection not found$(RESET)"
 
 qdrant-stats: ## Display collection statistics
 	@echo "$(GREEN)Qdrant collection statistics:$(RESET)"
@@ -390,6 +390,23 @@ qdrant-shell: ## Open Python shell with Qdrant client initialized
 qdrant-logs: ## Tail Qdrant container logs
 	@echo "$(GREEN)Showing Qdrant container logs...$(RESET)"
 	@docker-compose logs -f --tail=100 qdrant
+
+##@ OpenTelemetry Collector
+
+otel-health: ## Check OpenTelemetry Collector health
+	@echo "$(GREEN)Checking OpenTelemetry Collector health...$(RESET)"
+	@echo "$(YELLOW)Health Check Extension (port 13133):$(RESET)"
+	@curl -s http://localhost:13133/ | head -5 || echo "  ⚠ Health check endpoint not responding"
+	@echo ""
+	@echo "$(YELLOW)Metrics Endpoint (port 8889):$(RESET)"
+	@curl -s http://localhost:8889/metrics | head -5 || echo "  ⚠ Metrics endpoint not responding"
+	@echo ""
+	@echo "$(YELLOW)Container Status:$(RESET)"
+	@docker ps --filter name=jeex-otel-collector --format "  Status: {{.Status}}"
+
+otel-logs: ## Tail OpenTelemetry Collector container logs
+	@echo "$(GREEN)Showing OpenTelemetry Collector logs...$(RESET)"
+	@docker-compose logs -f --tail=100 otel-collector
 
 ##@ Redis Cache and Queue Service
 

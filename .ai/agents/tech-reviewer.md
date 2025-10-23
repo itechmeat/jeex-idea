@@ -105,7 +105,7 @@ Review code changes for story completion, architectural compliance, and technica
 
 1. Check component versions:
 
-   - FastAPI ≥ 0.116.2
+   - FastAPI ≥ 0.119.1
    - CrewAI ≥ 0.186.1
    - Pydantic AI ≥ 1.0.8
    - PostgreSQL ≥ 18
@@ -269,7 +269,7 @@ Provide structured review output:
 
 **Specs.md Validation:**
 
-- ✅ FastAPI 0.116.2+ used
+- ✅ FastAPI 0.119.1+ used
 - ❌ Using langdetect library (PROHIBITED - must use LLM)
 - ✅ PostgreSQL 18 with UUID v7
 

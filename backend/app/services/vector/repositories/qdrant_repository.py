@@ -53,10 +53,10 @@ class QdrantVectorRepository(VectorRepository):
     # Collection configuration constants
     COLLECTION_NAME = "jeex_memory"
     VECTOR_SIZE = 1536
-    HNSW_M = 16
-    HNSW_PAYLOAD_M = 16
-    HNSW_EF_CONSTRUCT = 100
-    FULL_SCAN_THRESHOLD = 10000
+    HNSW_M = 0  # Disable standard HNSW graph (rely on payload filtering)
+    HNSW_PAYLOAD_M = 16  # Enable payload-aware HNSW indexing for filtered search
+    HNSW_EF_CONSTRUCT = 100  # Balance between quality and build time
+    FULL_SCAN_THRESHOLD = 10000  # Enable efficient small-set filtering
     INDEXING_THRESHOLD = 20000
 
     # Batch operation limits
@@ -99,8 +99,8 @@ class QdrantVectorRepository(VectorRepository):
         ) as span:
             if not await self.collection_exists():
                 # Create collection with optimized HNSW configuration
-                await asyncio.to_thread(
-                    self.client.create_collection,
+                # Instrumented client already provides async methods
+                await self.client.create_collection(
                     collection_name=self.COLLECTION_NAME,
                     vectors_config=models.VectorParams(
                         size=self.VECTOR_SIZE,
@@ -138,7 +138,8 @@ class QdrantVectorRepository(VectorRepository):
     async def collection_exists(self) -> bool:
         """Check if collection exists."""
         try:
-            collections = await asyncio.to_thread(self.client.get_collections)
+            # Instrumented client already provides async methods
+            collections = await self.client.get_collections()
             return any(
                 collection.name == self.COLLECTION_NAME
                 for collection in collections.collections
@@ -149,9 +150,8 @@ class QdrantVectorRepository(VectorRepository):
     async def get_collection_info(self) -> Dict[str, Any]:
         """Get detailed collection information."""
         try:
-            info = await asyncio.to_thread(
-                self.client.get_collection, self.COLLECTION_NAME
-            )
+            # Instrumented client already provides async methods
+            info = await self.client.get_collection(self.COLLECTION_NAME)
             return {
                 "name": self.COLLECTION_NAME,  # Use the collection name we requested
                 "vector_size": info.config.params.vectors.size,
@@ -188,8 +188,8 @@ class QdrantVectorRepository(VectorRepository):
 
             for field_name, field_schema, description in indexes_to_create:
                 try:
-                    await asyncio.to_thread(
-                        self.client.create_payload_index,
+                    # Instrumented client already provides async methods
+                    await self.client.create_payload_index(
                         collection_name=self.COLLECTION_NAME,
                         field_name=field_name,
                         field_schema=field_schema,
@@ -256,9 +256,8 @@ class QdrantVectorRepository(VectorRepository):
                 "importance",
             ]
             try:
-                collection_info = await asyncio.to_thread(
-                    self.client.get_collection, self.COLLECTION_NAME
-                )
+                # Instrumented client already provides async methods
+                collection_info = await self.client.get_collection(self.COLLECTION_NAME)
                 payload_schema = collection_info.payload_schema
                 existing_indexes = set()
 
@@ -363,8 +362,8 @@ class QdrantVectorRepository(VectorRepository):
                     qdrant_points.append(qdrant_point)
 
                 try:
-                    await asyncio.to_thread(
-                        self.client.upsert,
+                    # Instrumented client already provides async methods
+                    await self.client.upsert(
                         collection_name=self.COLLECTION_NAME,
                         points=qdrant_points,
                     )
@@ -396,8 +395,8 @@ class QdrantVectorRepository(VectorRepository):
             raise ValueError("project_id is required for point retrieval")
 
         try:
-            result = await asyncio.to_thread(
-                self.client.retrieve,
+            # Instrumented client already provides async methods
+            result = await self.client.retrieve(
                 collection_name=self.COLLECTION_NAME,
                 ids=[str(point_id)],
                 with_payload=True,
@@ -504,9 +503,9 @@ class QdrantVectorRepository(VectorRepository):
 
             try:
                 # Execute search with timeout
+                # Instrumented client already provides async methods
                 search_result = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.client.search,
+                    self.client.search(
                         collection_name=self.COLLECTION_NAME,
                         query_vector=query_vector.to_list(),
                         query_filter=search_filter,
@@ -593,8 +592,8 @@ class QdrantVectorRepository(VectorRepository):
         try:
             # SECURITY: Use HasIdCondition for correct ID filtering with project isolation
             # HasIdCondition handles ID-based filtering properly in Qdrant
-            await asyncio.to_thread(
-                self.client.delete,
+            # Instrumented client already provides async methods
+            await self.client.delete(
                 collection_name=self.COLLECTION_NAME,
                 points_selector=models.HasIdCondition(
                     has_id=[str(pid) for pid in point_ids]
@@ -632,8 +631,8 @@ class QdrantVectorRepository(VectorRepository):
             count_before = await self.count_points(context)
 
             # Delete matching points
-            await asyncio.to_thread(
-                self.client.delete,
+            # Instrumented client already provides async methods
+            await self.client.delete(
                 collection_name=self.COLLECTION_NAME,
                 points_selector=filter_condition,
             )
@@ -659,8 +658,8 @@ class QdrantVectorRepository(VectorRepository):
                 ]
             )
 
-            count = await asyncio.to_thread(
-                self.client.count,
+            # Instrumented client already provides async methods
+            count = await self.client.count(
                 collection_name=self.COLLECTION_NAME,
                 count_filter=filter_condition,
             )
@@ -692,9 +691,8 @@ class QdrantVectorRepository(VectorRepository):
             # Check indexed fields
             indexed_fields = []
             try:
-                collection_info = await asyncio.to_thread(
-                    self.client.get_collection, self.COLLECTION_NAME
-                )
+                # Instrumented client already provides async methods
+                collection_info = await self.client.get_collection(self.COLLECTION_NAME)
                 payload_schema = collection_info.payload_schema
                 if hasattr(payload_schema, "get_schema"):
                     indexed_fields = list(payload_schema.get_schema().keys())
@@ -770,8 +768,8 @@ class QdrantCollectionManager(CollectionManager):
         try:
             # Delete existing collection if it exists
             if await self.repository.collection_exists():
-                await asyncio.to_thread(
-                    self.repository.client.delete_collection,
+                # Instrumented client already provides async methods
+                await self.repository.client.delete_collection(
                     self.repository.COLLECTION_NAME,
                 )
                 logger.info(

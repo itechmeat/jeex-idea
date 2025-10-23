@@ -36,13 +36,18 @@ logger = structlog.get_logger()
 
 @dataclass
 class QueryMetrics:
-    """Metrics for database query performance tracking."""
+    """
+    Metrics for database query performance tracking.
+
+    CRITICAL: project_id is ALWAYS required UUID (never Optional, never None).
+    This enforces SEC-002 project isolation at metrics level.
+    """
 
     query_type: str
     table_name: Optional[str]
     execution_time_ms: float
     row_count: Optional[int]
-    project_id: UUID
+    project_id: UUID  # REQUIRED: UUID for project isolation (SEC-002)
     timestamp: float
 
     @property
@@ -130,21 +135,23 @@ class DatabaseInstrumentor:
             if context._table_name:
                 span_name += f".{context._table_name}"
 
-            span = self.tracer.start_as_current_span(span_name)
+            # Use start_span instead of start_as_current_span in event listener
+            span = self.tracer.start_span(span_name)
             context._otel_span = span
 
             # Set standard database attributes
-            span.set_attribute(SpanAttributes.DB_SYSTEM, "postgresql")
-            span.set_attribute(SpanAttributes.DB_STATEMENT, statement)
-            span.set_attribute("db.query_type", context._query_type)
+            if span and span.is_recording():
+                span.set_attribute(SpanAttributes.DB_SYSTEM, "postgresql")
+                span.set_attribute(SpanAttributes.DB_STATEMENT, statement)
+                span.set_attribute("db.query_type", context._query_type)
 
-            if context._table_name:
-                span.set_attribute("db.table_name", context._table_name)
+                if context._table_name:
+                    span.set_attribute("db.table_name", context._table_name)
 
-            # Add project context if available
-            project_id = self._extract_project_id_from_context(context)
-            if project_id:
-                span.set_attribute("jeex.project_id", str(project_id))
+                # Add project context if available
+                project_id = self._extract_project_id_from_context(context)
+                if project_id:
+                    span.set_attribute("jeex.project_id", str(project_id))
 
             logger.debug(
                 "Database query started",
@@ -166,7 +173,7 @@ class DatabaseInstrumentor:
 
             # Update span with performance metrics
             if span and span.is_recording():
-                span.set_attribute(SpanAttributes.DB_DURATION_MS, execution_time)
+                span.set_attribute("db.duration_ms", execution_time)
 
                 # Add row count if available
                 if hasattr(cursor, "rowcount") and cursor.rowcount >= 0:
@@ -184,19 +191,29 @@ class DatabaseInstrumentor:
 
                 span.end()
 
-            # Track slow queries for analysis
-            project_id = self._extract_project_id_from_context(context) or "unknown"
+            # Track slow queries for analysis (CRITICAL: project_id required - SEC-002)
+            project_id = self._extract_project_id_from_context(context)
             if execution_time > 1000.0:
-                self._record_slow_query(
-                    QueryMetrics(
+                if not project_id:
+                    # CRITICAL: Cannot record slow query without project context (SEC-002)
+                    logger.error(
+                        "CRITICAL: Slow query detected without project_id context - cannot record",
                         query_type=query_type,
                         table_name=table_name,
                         execution_time_ms=execution_time,
-                        row_count=getattr(cursor, "rowcount", None),
-                        project_id=str(project_id),
-                        timestamp=time.time(),
                     )
-                )
+                    # Skip recording - better than recording with invalid project_id
+                else:
+                    self._record_slow_query(
+                        QueryMetrics(
+                            query_type=query_type,
+                            table_name=table_name,
+                            execution_time_ms=execution_time,
+                            row_count=getattr(cursor, "rowcount", None),
+                            project_id=project_id,  # UUID, not string
+                            timestamp=time.time(),
+                        )
+                    )
 
             logger.debug(
                 "Database query completed",
@@ -227,8 +244,9 @@ class DatabaseInstrumentor:
         event.listen(engine.sync_engine, "handle_error", handle_error)
 
         # Enable standard SQLAlchemy instrumentation
+        # Use sync_engine for instrumentation to avoid async event issues
         SQLAlchemyInstrumentor().instrument(
-            engine=engine,
+            engine=engine.sync_engine,
             enable_commenter=True,
             enable_metric=True,
         )
@@ -238,7 +256,7 @@ class DatabaseInstrumentor:
     def _setup_pool_monitoring(self, engine: AsyncEngine) -> None:
         """Setup connection pool metrics monitoring."""
 
-        @event.listens_for(engine.pool, "connect")
+        @event.listens_for(engine.sync_engine.pool, "connect")
         def receive_connect(dbapi_connection, connection_record):
             """Track new connections."""
             self._connection_metrics["total_connections"] += 1
@@ -249,7 +267,7 @@ class DatabaseInstrumentor:
             if span and span.is_recording():
                 span.set_attribute("db.connection.created", True)
 
-        @event.listens_for(engine.pool, "checkout")
+        @event.listens_for(engine.sync_engine.pool, "checkout")
         def receive_checkout(dbapi_connection, connection_record, connection_proxy):
             """Track connection checkout."""
             self._connection_metrics["active_connections"] += 1
@@ -263,7 +281,7 @@ class DatabaseInstrumentor:
                     "db.pool.active", self._connection_metrics["active_connections"]
                 )
 
-        @event.listens_for(engine.pool, "checkin")
+        @event.listens_for(engine.sync_engine.pool, "checkin")
         def receive_checkin(dbapi_connection, connection_record):
             """Track connection checkin."""
             self._connection_metrics["active_connections"] -= 1
@@ -431,46 +449,61 @@ class DatabaseInstrumentor:
         Returns:
             Dictionary with connection pool metrics
 
-        TODO: MEDIUM PRIORITY - Add defensive checks for empty duration lists to prevent division by zero
+        Note: Defensive checks added for empty collections to prevent errors.
         """
-        return {
-            "connection_metrics": self._connection_metrics.copy(),
-            "slow_queries_count": len(self._slow_queries),
-            "last_slow_queries": [
+        # Defensive check: handle empty slow queries list
+        if not self._slow_queries:
+            logger.debug("No slow queries recorded yet for metrics")
+            last_slow_queries = []
+        else:
+            last_slow_queries = [
                 {
                     "query_type": sq.query_type,
                     "table_name": sq.table_name,
                     "execution_time_ms": sq.execution_time_ms,
-                    "project_id": sq.project_id,
+                    "project_id": str(sq.project_id),  # Convert UUID to string for JSON
                     "timestamp": sq.timestamp,
                 }
                 for sq in self._slow_queries[-10:]  # Last 10 slow queries
-            ],
+            ]
+
+        return {
+            "connection_metrics": self._connection_metrics.copy(),
+            "slow_queries_count": len(self._slow_queries),
+            "last_slow_queries": last_slow_queries,
         }
 
     def get_slow_queries(
         self, project_id: UUID, limit: int = 100
     ) -> List[Dict[str, Any]]:
         """
-        Get slow queries for analysis.
+        Get slow queries for analysis with strict project isolation.
 
         Args:
-            project_id: Required project ID to filter by
-            limit: Maximum number of queries to return
+            project_id: REQUIRED project ID (UUID) to filter by (SEC-002)
+            limit: Maximum number of queries to return (default: 100)
 
         Returns:
-            List of slow query metrics
+            List of slow query metrics for specified project only
 
         Raises:
-            ValueError: If project_id is None
+            ValueError: If project_id is None or invalid (zero tolerance)
+            TypeError: If project_id is not UUID type
         """
+        # CRITICAL: Explicit validation (fail fast - zero tolerance)
         if project_id is None:
-            raise ValueError("project_id is required for slow queries retrieval")
+            raise ValueError(
+                "project_id is required for slow queries retrieval (cannot be None)"
+            )
 
-        queries = self._slow_queries
+        if not isinstance(project_id, UUID):
+            raise TypeError(
+                f"project_id must be UUID instance, got {type(project_id).__name__}"
+            )
 
-        # Filter by project ID (required)
-        queries = [sq for sq in queries if sq.project_id == project_id]
+        # Filter by project ID (REQUIRED - SEC-002)
+        # Only queries with valid project_id are recorded, so this is safe
+        queries = [sq for sq in self._slow_queries if sq.project_id == project_id]
 
         # Return most recent queries up to limit
         recent_queries = sorted(queries, key=lambda x: x.timestamp, reverse=True)[
@@ -483,7 +516,9 @@ class DatabaseInstrumentor:
                 "table_name": sq.table_name,
                 "execution_time_ms": sq.execution_time_ms,
                 "row_count": sq.row_count,
-                "project_id": str(sq.project_id),
+                "project_id": str(
+                    sq.project_id
+                ),  # Convert to string for JSON serialization
                 "timestamp": sq.timestamp,
                 "is_slow_query": sq.is_slow_query,
             }

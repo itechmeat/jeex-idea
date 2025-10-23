@@ -95,7 +95,7 @@ These fallbacks are **ALLOWED** as proper multi-tier architecture
 
 ## Dependency & Version Policy
 
-- Respect minimum versions documented in `docs/specs.md` (e.g., FastAPI ≥0.116.2, CrewAI ≥0.186.1)
+- Respect minimum versions documented in `docs/specs.md` (e.g., FastAPI ≥0.119.1, CrewAI ≥0.186.1)
 - Resolve conflicts by upgrading related packages; never downgrade below mandated baselines
 
 ## Environment Notes

@@ -17,7 +17,7 @@ Build production-grade FastAPI backends in `backend/` using modern patterns from
 
 **Tech Stack (MANDATORY):**
 
-- **FastAPI 0.116.2+** with async I/O
+- **FastAPI 0.119.1+** with async I/O
 - **SQLAlchemy 2+** with async support
 - **Pydantic 2+** with strict typing
 - **PostgreSQL 18+**

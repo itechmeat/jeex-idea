@@ -31,5 +31,88 @@
 
 ## Current Sprint (or Working On)
 
-- 🟡 No active stories in progress
-  - Next story: Setup FastAPI Backend Foundation - Story 6
+6. [~] **[Setup FastAPI Backend Foundation](setup-fastapi-backend/)** — Initialize API service with core architecture (75% Complete)
+
+   - Status: ⚠️ In Progress (Blocked by OTEL metrics exporter issue)
+   - Started: 2025-10-22
+   - Key Outcomes:
+     - ✅ Chain-of-Verification applied: 3 variants analyzed, Variant C selected (88% score)
+     - ✅ BaseRepository pattern with project isolation (SEC-002 CRITICAL)
+     - ✅ Security Headers middleware with 7 headers (SEC-001)
+     - ✅ SSE streaming service with Redis pub/sub (REQ-006)
+     - ✅ ADR and Completion Report documenting architectural decisions
+   - Blocker: API service cannot accept HTTP connections due to OTEL metrics exporter crash
+   - Next Action: Disable OTEL metrics for MVP (15-30 min) OR proceed to Story 7
+   - Technical Debt: 7 SP deferred with clear repayment plan (see Technical Debt section)
+
+
+---
+
+## Technical Debt (Deferred with Repayment Plan)
+
+Items deferred from completed stories with clear repayment strategies and triggers.
+
+### From Story 6: Setup FastAPI Backend Foundation (7 SP)
+
+**Total Debt: 7 SP** — Minimal debt with low risk
+
+#### 1. Service Layer Implementation (3 SP)
+
+- **Deferred Because:** No complex business logic exists yet (MVP principle)
+- **Add When:** Story 7+ requires transaction coordination across multiple repositories
+- **Effort:** 3 SP
+- **Risk:** LOW - Repository pattern provides clean integration point
+- **Location:** Add `backend/app/services/` layer between routes and repositories
+- **Trigger:** When business logic requires multi-step transactions or orchestration
+
+#### 2. Auth Middleware Activation (2 SP)
+
+- **Deferred Because:** OAuth2/Twitter integration scheduled for Story 18
+- **Add When:** Story 18 implementation
+- **Effort:** 2 SP (infrastructure already prepared in `app/core/security.py`)
+- **Risk:** LOW - Code scaffolded with TODO markers
+- **Location:** Activate `OAuth2PasswordBearer` dependency in routes
+- **Trigger:** Story 18 starts (Authentication System)
+
+#### 3. Advanced SSE Features (2 SP)
+
+- **Deferred Because:** MVP does not need backpressure until proven by load testing
+- **Add When:** Memory monitoring shows >10MB per connection OR client disconnect issues emerge
+- **Effort:** 2 SP (enhance existing `SSEService`)
+- **Risk:** LOW - Basic implementation functional for MVP
+- **Location:** Enhance `backend/app/services/sse.py`
+- **Trigger:** Load testing or production monitoring reveals issues
+
+---
+
+## Post-MVP Infrastructure Improvements
+
+Tasks that can be completed after MVP launch but before production scale.
+
+### Fix OpenTelemetry Full Integration (2-3 hours)
+
+- **Scope:** Debug OTEL collector unhealthy status, fix metrics exporter crash, restore full tracing and metrics
+- **Priority:** MEDIUM (observability nice-to-have for MVP, critical for production)
+- **Dependencies:** Post-MVP OR Story 19 (Security and Isolation)
+- **Deferred From:** Story 6 (Setup FastAPI Backend Foundation)
+- **Current Status:** API service blocked from accepting HTTP connections due to metrics exporter crash in background thread
+- **Recommended Action:** Disable OTEL metrics for MVP, re-enable after launch with proper error handling
+- **Resolution Options:**
+  1. Disable OTEL metrics entirely (keep traces only) — 15-30 min
+  2. Fix OTEL collector connectivity — 2-3 hours
+  3. Wrap metrics exporter in additional error handling — 1 hour
+
+---
+
+## Debt Repayment Schedule
+
+| Item | Story | Priority | Effort | When |
+|------|-------|----------|--------|------|
+| Service Layer | Story 7+ | LOW | 3 SP | When orchestration needed |
+| Auth Middleware | Story 18 | HIGH | 2 SP | Story 18 starts |
+| Advanced SSE | Post-MVP | MEDIUM | 2 SP | Load testing shows need |
+| OTEL Fix | Post-MVP/Story 19 | MEDIUM | 2-3 hrs | Before production scale |
+
+**Total Known Debt:** 7 SP + 2-3 hours
+**Risk Level:** LOW (all items have clear triggers and integration points)
+
