@@ -614,13 +614,29 @@ backend-lint: ## Run backend linting checks
 
 backend-fix: ## Fix backend linting issues
 	@echo "🐍 Fixing backend Python linting..."
-	@cd backend && $(PYTHON) -m ruff check $(BACKEND_LINT_TARGETS) --fix --extend-ignore E501,B904,BLE001,G201,ANN001,ANN002,ANN003,ANN201,ANN202,ANN205,RUF012,S101,S104,S105,S107,SIM102,SIM103,UP038,C901,RUF001
-	@echo "🐍 Fixing backend Python formatting..."
-	@cd backend && $(PYTHON) -m ruff format $(BACKEND_LINT_TARGETS)
+	@cd backend; \
+	if $(PYTHON) -c "import importlib,sys; sys.exit(0 if importlib.util.find_spec('ruff') else 1)" >/dev/null 2>&1; then \
+		$(PYTHON) -m ruff check $(BACKEND_LINT_TARGETS) --fix --extend-ignore E501,B904,BLE001,G201,ANN001,ANN002,ANN003,ANN201,ANN202,ANN205,RUF012,S101,S104,S105,S107,SIM102,SIM103,UP038,C901,RUF001; \
+		$(PYTHON) -m ruff format $(BACKEND_LINT_TARGETS); \
+	elif command -v ruff >/dev/null 2>&1; then \
+		ruff check $(BACKEND_LINT_TARGETS) --fix --extend-ignore E501,B904,BLE001,G201,ANN001,ANN002,ANN003,ANN201,ANN202,ANN205,RUF012,S101,S104,S105,S107,SIM102,SIM103,UP038,C901,RUF001; \
+		ruff format $(BACKEND_LINT_TARGETS); \
+	else \
+		echo "$(RED)Error: ruff not found. Install with: pip install ruff$(RESET)"; \
+		exit 1; \
+	fi
 
 backend-format: ## Format backend Python code
 	@echo "🐍 Formatting backend Python code..."
-	@cd backend && ./venv/bin/ruff format $(BACKEND_LINT_TARGETS)
+	@cd backend; \
+	if $(PYTHON) -c "import importlib,sys; sys.exit(0 if importlib.util.find_spec('ruff') else 1)" >/dev/null 2>&1; then \
+		$(PYTHON) -m ruff format $(BACKEND_LINT_TARGETS); \
+	elif command -v ruff >/dev/null 2>&1; then \
+		ruff format $(BACKEND_LINT_TARGETS); \
+	else \
+		echo "$(RED)Error: ruff not found. Install with: pip install ruff$(RESET)"; \
+		exit 1; \
+	fi
 
 check: ## Run type checks
 	@echo "🔍 Running type checks..."

@@ -10,7 +10,7 @@ Agent execution tracking and management with:
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func, case
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -161,13 +161,18 @@ async def start_agent_workflow(
     project_id: UUID,
     stage: str,
     user_id: UUID = Query(..., description="User ID for access validation"),
-    language: str = Query(..., description="Project language (ISO 639-1)"),
-    user_message: str = Query("", description="Initial user message for PM"),
+    language: str = Query(
+        ..., description="Project language (ISO 639-1)", min_length=2, max_length=10
+    ),
+    user_message: str = Query(..., description="Initial user message for PM", min_length=1),
     orchestrator: AgentOrchestrator = Depends(orchestrator_provider),
 ):
     """Start an agent workflow for a given stage using the orchestrator.
 
     Returns minimal execution metadata for tracking.
+    
+    TODO: Replace user_id Query parameter with authenticated identity (e.g., get_current_user dependency)
+    in a future refactor when OAuth2 authentication is fully integrated.
     """
     try:
         context = create_context(
@@ -177,12 +182,22 @@ async def start_agent_workflow(
             project_id=project_id,
             correlation_id=context.correlation_id,
             language=language,
-            user_message=user_message or "",
+            user_message=user_message,
         )
         result = await orchestrator.execute_agent_workflow(
             stage=stage, context=context, input_data=input_data
         )
         return result
+    except ValidationError as e:
+        # Contract validation errors - return as client errors
+        logger.error(
+            "Agent input validation failed",
+            project_id=str(project_id),
+            user_id=str(user_id),
+            validation_errors=e.errors(),
+            error=str(e),
+        )
+        raise HTTPException(status_code=400, detail=str(e))
     except (ValueError, PermissionError) as e:
         # Business logic errors - return as client errors
         logger.error(

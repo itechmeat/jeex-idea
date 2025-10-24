@@ -52,8 +52,8 @@ def circuit_breaker(
     def decorator(func: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> T:
-            key = f"agent:cb:{agent_key}:failures"
-            open_key = f"agent:cb:{agent_key}:open"
+            key = f"agent:cb:{project_id}:{agent_key}:failures"
+            open_key = f"agent:cb:{project_id}:{agent_key}:open"
 
             from redis.asyncio import Redis
 

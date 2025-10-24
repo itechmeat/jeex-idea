@@ -202,7 +202,10 @@ All requirements follow EARS (Easy Approach to Requirements Syntax) patterns for
 - `agent.context.load`
 
 **While** emitting traces,  
-**the system** shall include attributes: project_id (hashed), agent_type, stage, status, language.
+**the system** shall include attributes: project_id (one-way SHA-256 hashed), agent_type, stage, status, language.
+
+**Where** project_id appears as a trace attribute,  
+**the system** shall transform the raw UUID to its SHA-256 hex digest before attaching it to OpenTelemetry spans (the raw UUID must never be logged or transmitted in telemetry data).
 
 **Verification:**
 
@@ -508,29 +511,28 @@ All requirements follow EARS (Easy Approach to Requirements Syntax) patterns for
 
 ## 10. Traceability Matrix
 
-| Requirement ID | Design Section | Test Location |
-|----------------|----------------|---------------|
-| REQ-AGT-001 | 4.1 CrewAI Orchestrator | `test_orchestrator.py` |
-| REQ-AGT-002 | 4.2 Pydantic Contracts | `test_agent_contracts.py` |
-| REQ-AGT-003 | 4.1 Orchestrator | `test_product_manager.py` |
-| REQ-AGT-004 | 4.3 Context Manager | `test_execution_context.py` |
-| REQ-AGT-005 | 4.4 Execution Tracker | `test_agent_tracking.py` |
-| REQ-AGT-006 | 6.1 Project Isolation | `test_project_isolation.py` |
-| REQ-AGT-007 | 6.2 Language Isolation | `test_language_isolation.py` |
-| REQ-AGT-008 | 4.3 Context Manager | `test_redis_state.py` |
-| REQ-AGT-009 | 4.2 Pydantic Contracts | `test_contract_schemas.py` |
-| REQ-AGT-010 | 4.5 ADK Protocol | `test_adk_stubs.py` |
-| REQ-AGT-NFR-001 | 7.2 Performance | `test_performance.py` |
-| REQ-AGT-NFR-002 | 6.3 Error Handling | `test_error_handling.py` |
-| REQ-AGT-NFR-003 | 6.3 Error Handling | `test_circuit_breaker.py` |
-| REQ-AGT-NFR-004 | 7.1 Observability | `test_telemetry.py` |
-| REQ-AGT-NFR-005 | 9.2 Dependencies | `test_dependencies.py` |
-| REQ-AGT-SEC-001 | 6.1 Security | `test_context_immutability.py` |
-| REQ-AGT-SEC-002 | 6.3 Error Handling | `test_input_sanitization.py` |
-| REQ-AGT-SEC-003 | 6.1 Security | `test_authorization.py` |
-| REQ-AGT-DAT-001 | 5.1 Data Models | `test_agent_executions_schema.py` |
-| REQ-AGT-DAT-002 | 5.2 Redis State | `test_redis_ttl.py` |
-| REQ-AGT-INT-001 | 4.1 Orchestrator | `test_fastapi_integration.py` |
-| REQ-AGT-INT-002 | 4.4 Tracker | `test_transaction_safety.py` |
-| REQ-AGT-INT-003 | 4.3 Context | `test_qdrant_filtering.py` |
-
+| Requirement ID  | Design Section          | Test Location                     |
+| --------------- | ----------------------- | --------------------------------- |
+| REQ-AGT-001     | 4.1 CrewAI Orchestrator | `test_orchestrator.py`            |
+| REQ-AGT-002     | 4.2 Pydantic Contracts  | `test_agent_contracts.py`         |
+| REQ-AGT-003     | 4.1 Orchestrator        | `test_product_manager.py`         |
+| REQ-AGT-004     | 4.3 Context Manager     | `test_execution_context.py`       |
+| REQ-AGT-005     | 4.4 Execution Tracker   | `test_agent_tracking.py`          |
+| REQ-AGT-006     | 6.1 Project Isolation   | `test_project_isolation.py`       |
+| REQ-AGT-007     | 6.2 Language Isolation  | `test_language_isolation.py`      |
+| REQ-AGT-008     | 4.3 Context Manager     | `test_redis_state.py`             |
+| REQ-AGT-009     | 4.2 Pydantic Contracts  | `test_contract_schemas.py`        |
+| REQ-AGT-010     | 4.5 ADK Protocol        | `test_adk_stubs.py`               |
+| REQ-AGT-NFR-001 | 7.2 Performance         | `test_performance.py`             |
+| REQ-AGT-NFR-002 | 6.3 Error Handling      | `test_error_handling.py`          |
+| REQ-AGT-NFR-003 | 6.3 Error Handling      | `test_circuit_breaker.py`         |
+| REQ-AGT-NFR-004 | 7.1 Observability       | `test_telemetry.py`               |
+| REQ-AGT-NFR-005 | 9.2 Dependencies        | `test_dependencies.py`            |
+| REQ-AGT-SEC-001 | 6.1 Security            | `test_context_immutability.py`    |
+| REQ-AGT-SEC-002 | 6.3 Error Handling      | `test_input_sanitization.py`      |
+| REQ-AGT-SEC-003 | 6.1 Security            | `test_authorization.py`           |
+| REQ-AGT-DAT-001 | 5.1 Data Models         | `test_agent_executions_schema.py` |
+| REQ-AGT-DAT-002 | 5.2 Redis State         | `test_redis_ttl.py`               |
+| REQ-AGT-INT-001 | 4.1 Orchestrator        | `test_fastapi_integration.py`     |
+| REQ-AGT-INT-002 | 4.4 Tracker             | `test_transaction_safety.py`      |
+| REQ-AGT-INT-003 | 4.3 Context             | `test_qdrant_filtering.py`        |

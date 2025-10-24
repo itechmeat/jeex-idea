@@ -14,7 +14,19 @@ from .orchestrator import AgentOrchestrator
 async def tracker_provider(
     project_id: UUID, session: AsyncSession = Depends(get_database_session)
 ) -> AgentExecutionTracker:
-    # project_id comes from upstream dependency (e.g., validated from request)
+    """Provide AgentExecutionTracker instance.
+
+    Args:
+        project_id: Accepted to trigger upstream dependency validation in API layer;
+                   intentionally unused in tracker instantiation as tracker operates
+                   on execution_id which is already project-scoped.
+        session: Database session.
+
+    Returns:
+        AgentExecutionTracker instance.
+    """
+    # project_id validated by upstream dependency; not used here
+    _ = project_id
     return AgentExecutionTracker(session=session)
 
 

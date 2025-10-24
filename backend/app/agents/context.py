@@ -39,9 +39,20 @@ def create_context(
         )
         existing = None
 
+    # Parse existing correlation_id safely; fallback to new UUID if invalid
+    correlation_id = uuid4()
+    if existing:
+        try:
+            correlation_id = UUID(existing)
+        except (ValueError, TypeError) as e:
+            logger.debug(
+                "Invalid correlation_id format, generating new UUID",
+                extra={"existing_value": existing, "error": str(e)},
+            )
+
     return ExecutionContext(
         project_id=project_id,
-        correlation_id=UUID(existing) if existing else uuid4(),
+        correlation_id=correlation_id,
         language=language,
         user_id=user_id,
         stage=stage,

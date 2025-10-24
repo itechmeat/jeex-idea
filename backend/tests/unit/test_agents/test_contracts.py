@@ -1,7 +1,7 @@
 from uuid import uuid4
 import pytest
 
-from app.agents.contracts import AgentInput, AgentOutput
+from app.agents.contracts import AgentInput, AgentOutput, ExecutionStatus
 from pydantic import ValidationError
 
 
@@ -35,5 +35,5 @@ def test_agent_input_invalid_language():
 
 
 def test_agent_output_valid():
-    out = AgentOutput(agent_type="pm", status="success", content="ok")
-    assert out.status == "success"
+    out = AgentOutput(agent_type="pm", status=ExecutionStatus.completed, content="ok")
+    assert out.status == ExecutionStatus.completed

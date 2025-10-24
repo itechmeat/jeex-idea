@@ -97,19 +97,11 @@ class AgentOrchestrator:
             crew = await self.initialize_crew(stage=stage, context=context)
 
             async def _run():
-                # TODO: Implement CrewAI task delegation after MVP
-                # Current MVP behavior: immediate completion after initialization
+                # TODO: Implement CrewAI task delegation (Story 8)
+                # Agent execution not implemented yet per compliance requirements
                 _ = crew
-                async with self.tracker.session.begin():
-                    await self.tracker.complete_execution(
-                        execution_id=execution_id,
-                        output_data={"message": "Workflow initialized"},
-                        status="completed",
-                    )
-                await self.state_manager.update_state(
-                    correlation_id=context.correlation_id,
-                    current_agent="product_manager",
-                    progress=100,
+                raise NotImplementedError(
+                    "Agent task delegation not implemented yet; see Story 8 for planned implementation."
                 )
 
             timeout = int(os.getenv("AGENT_EXECUTION_TIMEOUT_SECONDS", "300"))

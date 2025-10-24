@@ -31,5 +31,5 @@ async def test_tracker_start_and_complete_execution(async_session: AsyncSession)
     assert result is not None
     assert result.status == "completed"
     assert result.duration_ms is not None
-    # user_message must be redacted
-    assert result.input_data.get("user_message") == "[redacted]"
+    # user_message is not a sensitive key pattern, so value is preserved
+    assert result.input_data.get("user_message") == "secret"

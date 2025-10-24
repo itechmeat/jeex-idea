@@ -24,4 +24,4 @@ This guide explains how to define Pydantic AI contracts, integrate with the orch
 
 ## ADK Stubs
 
-- Protocols in `backend/app/agents/adk/`. Remote calls are NotImplemented in MVP.
+- Protocols in `backend/app/agents/adk/`. Remote calls raise `NotImplementedError` in MVP.

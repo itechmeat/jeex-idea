@@ -15,6 +15,19 @@ from ..models import AgentExecution
 class AgentExecutionTracker:
     """Persist agent execution lifecycle events to PostgreSQL with ACID guarantees."""
 
+    # Class-level constants for sanitization (compiled once)
+    SENSITIVE_PATTERNS = [
+        re.compile(r".*password.*", re.IGNORECASE),
+        re.compile(r".*token.*", re.IGNORECASE),
+        re.compile(r".*secret.*", re.IGNORECASE),
+        re.compile(r".*key.*", re.IGNORECASE),
+        re.compile(r".*auth.*", re.IGNORECASE),
+        re.compile(r".*credential.*", re.IGNORECASE),
+        re.compile(r".*api[_-]?key.*", re.IGNORECASE),
+    ]
+    TRUNCATE_FIELDS = {"user_message", "content", "description"}
+    TRUNCATE_LEN = 100
+
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.logger = logging.getLogger(__name__)
@@ -59,7 +72,20 @@ class AgentExecutionTracker:
     ) -> None:
         now = datetime.now(UTC)
         try:
-            # Update completion data
+            # First, SELECT to get started_at
+            result = await self.session.execute(
+                select(AgentExecution.started_at).where(
+                    AgentExecution.id == execution_id
+                )
+            )
+            started_at = result.scalar_one_or_none()
+
+            # Calculate duration_ms if started_at exists
+            duration_ms = None
+            if started_at:
+                duration_ms = int((now - started_at).total_seconds() * 1000)
+
+            # Single UPDATE with all fields
             await self.session.execute(
                 update(AgentExecution)
                 .where(AgentExecution.id == execution_id)
@@ -67,23 +93,9 @@ class AgentExecutionTracker:
                     output_data=self._sanitize(output_data or {}),
                     status=status,
                     completed_at=now,
+                    duration_ms=duration_ms,
                 )
             )
-
-            # Calculate duration_ms if possible
-            result = await self.session.execute(
-                select(AgentExecution).where(AgentExecution.id == execution_id)
-            )
-            row = result.scalar_one()
-            if getattr(row, "started_at", None) and getattr(row, "completed_at", None):
-                duration_ms = int(
-                    (row.completed_at - row.started_at).total_seconds() * 1000
-                )
-                await self.session.execute(
-                    update(AgentExecution)
-                    .where(AgentExecution.id == execution_id)
-                    .values(duration_ms=duration_ms)
-                )
         except Exception:
             self.logger.exception(
                 "Failed to complete execution",
@@ -94,26 +106,38 @@ class AgentExecutionTracker:
     async def fail_execution(self, correlation_id: UUID, error_message: str) -> None:
         if not isinstance(error_message, str) or not error_message.strip():
             raise ValueError("error_message must be a non-empty string")
+        now = datetime.now(UTC)
         try:
+            # First, SELECT to get execution.id and started_at
             result = await self.session.execute(
-                select(AgentExecution).where(
+                select(AgentExecution.id, AgentExecution.started_at).where(
                     AgentExecution.correlation_id == correlation_id
                 )
             )
-            execution = result.scalar_one_or_none()
-            if not execution:
+            row = result.one_or_none()
+            if not row:
                 self.logger.error(
                     "Execution not found for failure update",
                     extra={"correlation_id": str(correlation_id)},
                 )
                 raise LookupError("Execution not found for given correlation_id")
+
+            execution_id, started_at = row
+
+            # Calculate duration_ms if started_at exists
+            duration_ms = None
+            if started_at:
+                duration_ms = int((now - started_at).total_seconds() * 1000)
+
+            # Single UPDATE with all fields including duration_ms
             await self.session.execute(
                 update(AgentExecution)
-                .where(AgentExecution.id == execution.id)
+                .where(AgentExecution.id == execution_id)
                 .values(
                     status="failed",
                     error_message=error_message,
-                    completed_at=datetime.now(UTC),
+                    completed_at=now,
+                    duration_ms=duration_ms,
                 )
             )
         except Exception:
@@ -156,27 +180,18 @@ class AgentExecutionTracker:
             return "[max_depth_reached]"
         if data is None or isinstance(data, (str, int, float, bool)):
             return data
-        sensitive_patterns = [
-            re.compile(r".*password.*", re.IGNORECASE),
-            re.compile(r".*token.*", re.IGNORECASE),
-            re.compile(r".*secret.*", re.IGNORECASE),
-            re.compile(r".*key.*", re.IGNORECASE),
-            re.compile(r".*auth.*", re.IGNORECASE),
-            re.compile(r".*credential.*", re.IGNORECASE),
-            re.compile(r".*api[_-]?key.*", re.IGNORECASE),
-        ]
-        truncate_fields = {"user_message", "content", "description"}
-        truncate_len = 100
 
         if isinstance(data, dict):
             sanitized: dict[str, Any] = {}
             for key, value in data.items():
-                if any(p.match(key) for p in sensitive_patterns):
+                if any(p.match(key) for p in AgentExecutionTracker.SENSITIVE_PATTERNS):
                     sanitized[key] = "[redacted]"
-                elif key in truncate_fields and isinstance(value, str):
+                elif key in AgentExecutionTracker.TRUNCATE_FIELDS and isinstance(
+                    value, str
+                ):
                     sanitized[key] = (
-                        value[:truncate_len] + "... [truncated]"
-                        if len(value) > truncate_len
+                        value[: AgentExecutionTracker.TRUNCATE_LEN] + "... [truncated]"
+                        if len(value) > AgentExecutionTracker.TRUNCATE_LEN
                         else value
                     )
                 else:

@@ -18,8 +18,8 @@ class ExecutionStateManager:
     def __init__(self) -> None:
         self.ttl_seconds = STATE_TTL_SECONDS
 
-    def _key(self, correlation_id: UUID) -> str:
-        return f"agent:execution:{correlation_id}"
+    def _key(self, project_id: UUID, correlation_id: UUID) -> str:
+        return f"agent:execution:{project_id}:{correlation_id}"
 
     async def create_state(self, context: ExecutionContext, stage: str) -> None:
         payload = {
@@ -42,16 +42,19 @@ class ExecutionStateManager:
         await redis_service.execute_with_retry(
             operation="state.create",
             func=_set,
-            key=self._key(context.correlation_id),
+            key=self._key(context.project_id, context.correlation_id),
             value=json.dumps(payload),
             ex=self.ttl_seconds,
             project_id=str(context.project_id),
         )
 
     async def update_state(
-        self, correlation_id: UUID, current_agent: str, progress: int
+        self, project_id: UUID, correlation_id: UUID, current_agent: str, progress: int
     ) -> None:
         from redis.asyncio import Redis
+
+        # Clamp progress to 0-100 range
+        progress = max(0, min(100, int(progress)))
 
         async def _get(conn: Redis, key: str) -> str | None:
             return await conn.get(key)
@@ -59,14 +62,14 @@ class ExecutionStateManager:
         raw = await redis_service.execute_with_retry(
             operation="state.get",
             func=_get,
-            key=self._key(correlation_id),
-            project_id="00000000-0000-0000-0000-000000000000",  # project_id embedded in state
+            key=self._key(project_id, correlation_id),
+            project_id=str(project_id),
         )
         if not raw:
             return
         state = json.loads(raw)
         state["current_agent"] = current_agent
-        state["progress"] = int(progress)
+        state["progress"] = progress
         state["updated_at"] = datetime.now(UTC).isoformat()
 
         async def _set(conn: Redis, key: str, value: str, ex: int) -> bool:
@@ -75,10 +78,10 @@ class ExecutionStateManager:
         await redis_service.execute_with_retry(
             operation="state.update",
             func=_set,
-            key=self._key(correlation_id),
+            key=self._key(project_id, correlation_id),
             value=json.dumps(state),
             ex=self.ttl_seconds,
-            project_id=state.get("project_id", ""),
+            project_id=str(project_id),
         )
 
     async def get_state(
@@ -92,7 +95,7 @@ class ExecutionStateManager:
         raw = await redis_service.execute_with_retry(
             operation="state.get",
             func=_get,
-            key=self._key(correlation_id),
+            key=self._key(project_id, correlation_id),
             project_id=str(project_id),
         )
         return json.loads(raw) if raw else None
@@ -106,6 +109,6 @@ class ExecutionStateManager:
         await redis_service.execute_with_retry(
             operation="state.cleanup",
             func=_delete,
-            key=self._key(correlation_id),
+            key=self._key(project_id, correlation_id),
             project_id=str(project_id),
         )

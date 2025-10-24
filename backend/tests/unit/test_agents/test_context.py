@@ -8,6 +8,6 @@ def test_create_context_freezes_fields():
     ctx = create_context(
         project_id=uuid4(), user_id=uuid4(), stage="idea", language="en"
     )
+    # Pydantic frozen model should reject direct attribute mutation
     with pytest.raises(Exception):
-        # Pydantic frozen model should reject mutation
-        object.__setattr__(ctx, "language", "ru")
+        ctx.language = "ru"

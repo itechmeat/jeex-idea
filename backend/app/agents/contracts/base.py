@@ -49,16 +49,19 @@ class AgentInput(BaseModel):
 class AgentOutput(BaseModel):
     """Base output contract for all agents.
 
+    Status field uses ExecutionStatus enum values to maintain consistency
+    across agent execution tracking.
+
     Example:
         >>> AgentOutput(
         ...     agent_type="product_manager",
-        ...     status="success",
+        ...     status="completed",
         ...     content="All good",
         ... )
     """
 
     agent_type: str = Field(..., min_length=1, max_length=50)
-    status: str = Field(..., pattern=r"^(success|error|needs_input)$")
+    status: ExecutionStatus = Field(..., description="Execution status following ExecutionStatus enum")
     content: str = Field("", description="Primary textual content")
     metadata: Dict[str, Any] = Field(default_factory=dict)
     next_agent: Optional[str] = Field(default=None, max_length=50)

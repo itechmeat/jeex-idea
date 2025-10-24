@@ -22,7 +22,7 @@ class IsolationValidator:
             select(Project).where(
                 Project.id == project_id,
                 Project.created_by == user_id,
-                Project.is_deleted == False,  # noqa: E712
+                Project.is_deleted.is_(False),
             )
         )
         if result.scalar_one_or_none() is None:
@@ -40,7 +40,7 @@ class IsolationValidator:
         result = await self.session.execute(
             select(Project.language).where(
                 Project.id == project_id,
-                Project.is_deleted == False,  # noqa: E712
+                Project.is_deleted.is_(False),
             )
         )
         db_language = result.scalar_one_or_none()
