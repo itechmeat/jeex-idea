@@ -24,11 +24,12 @@ receivers:
           static_configs:
             - targets: ["localhost:9464"]
           scrape_interval: 15s
-        - job_name: "jeex-idea-api"
-          static_configs:
-            - targets: ["api:8000"]
-          scrape_interval: 15s
-          metrics_path: "/metrics"
+        # API metrics are exported via OTLP, not Prometheus scrape
+        # - job_name: "jeex-idea-api"
+        #   static_configs:
+        #     - targets: ["api:8000"]
+        #   scrape_interval: 15s
+        #   metrics_path: "/metrics"
 
   # File receiver for reading existing log files
   filelog:
@@ -114,7 +115,7 @@ exporters:
 extensions:
   # Health check extension (available for Docker health checks)
   health_check:
-    endpoint: 0.0.0.0:13133
+    endpoint: 127.0.0.1:13133
 
   # Pprof extension for performance profiling (localhost only)
   pprof:

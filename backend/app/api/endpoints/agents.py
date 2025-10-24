@@ -10,7 +10,7 @@ Agent execution tracking and management with:
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func, case
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -25,6 +25,10 @@ from ...db import get_database_session
 from ...models import AgentExecution, Project, User
 from ...core.config import get_settings
 from ...core.monitoring import performance_monitor
+from ...agents.dependencies import orchestrator_provider
+from ...agents.context import create_context
+from ...agents.orchestrator import AgentOrchestrator
+from ...agents.contracts import AgentInput, AgentOutput
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -96,6 +100,144 @@ class AgentMetrics(BaseModel):
     success_rate: float
     executions_by_agent_type: Dict[str, int]
     recent_executions: List[AgentExecutionRead]
+
+
+class WorkflowStartResponse(BaseModel):
+    """Response model for workflow initiation."""
+
+    execution_id: str = Field(..., description="UUID of the created execution record")
+    status: str = Field(..., description="Current status of the workflow")
+
+
+@router.post(
+    "/projects/{project_id}/agents/workflows/{stage}/start",
+    status_code=202,
+    response_model=WorkflowStartResponse,
+    responses={
+        202: {
+            "description": "Workflow started successfully",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "execution_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "status": "completed",
+                    }
+                }
+            },
+        },
+        400: {
+            "description": "Invalid request parameters",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "language_mismatch": {
+                            "summary": "Language mismatch",
+                            "value": {
+                                "detail": "Input language does not match project language"
+                            },
+                        }
+                    }
+                }
+            },
+        },
+        403: {
+            "description": "Project access denied",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Project not found or access denied"}
+                }
+            },
+        },
+        500: {"description": "Internal server error during workflow execution"},
+    },
+    summary="Start agent workflow for project stage",
+    description=(
+        "Initiates a multi-agent workflow for the specified project and stage.\n\n"
+        "Requirements: user must have access; language must match project; project must not be deleted.\n"
+        "Behavior: creates execution record, initializes Redis state (24h TTL), starts CrewAI crew, emits OTEL traces."
+    ),
+)
+async def start_agent_workflow(
+    project_id: UUID,
+    stage: str,
+    user_id: UUID = Query(..., description="User ID for access validation"),
+    language: str = Query(
+        ..., description="Project language (ISO 639-1)", min_length=2, max_length=10
+    ),
+    user_message: str = Query(..., description="Initial user message for PM", min_length=1),
+    orchestrator: AgentOrchestrator = Depends(orchestrator_provider),
+):
+    """Start an agent workflow for a given stage using the orchestrator.
+
+    Returns minimal execution metadata for tracking.
+    
+    TODO: Replace user_id Query parameter with authenticated identity (e.g., get_current_user dependency)
+    in a future refactor when OAuth2 authentication is fully integrated.
+    """
+    try:
+        context = create_context(
+            project_id=project_id, user_id=user_id, stage=stage, language=language
+        )
+        input_data = AgentInput(
+            project_id=project_id,
+            correlation_id=context.correlation_id,
+            language=language,
+            user_message=user_message,
+        )
+        result = await orchestrator.execute_agent_workflow(
+            stage=stage, context=context, input_data=input_data
+        )
+        return result
+    except ValidationError as e:
+        # Contract validation errors - return as client errors
+        logger.error(
+            "Agent input validation failed",
+            project_id=str(project_id),
+            user_id=str(user_id),
+            validation_errors=e.errors(),
+            error=str(e),
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+    except (ValueError, PermissionError) as e:
+        # Business logic errors - return as client errors
+        logger.error(
+            "Workflow validation failed",
+            project_id=str(project_id),
+            user_id=str(user_id),
+            error=str(e),
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # Unexpected errors - log with full context, return generic error
+        logger.exception(
+            "Workflow execution failed",
+            project_id=str(project_id),
+            user_id=str(user_id),
+            stage=stage,
+        )
+        raise HTTPException(
+            status_code=500, detail="Workflow execution failed"
+        ) from e
+
+
+@router.get("/agents/health")
+async def agent_health_check():
+    """Health check for agent orchestration system."""
+    # TODO: Implement real health checks (CrewAI availability, orchestrator readiness)
+    # Current MVP: stub implementation, returns hardcoded values
+    raise HTTPException(
+        status_code=501,
+        detail="Health check not implemented - use /health endpoint for API health",
+    )
+
+
+@router.get("/agents/contracts")
+async def list_agent_contracts():
+    """Return minimal contract schemas for discovery (OpenAPI augmentation)."""
+    return {
+        "AgentInput": AgentInput.model_json_schema(),
+        "AgentOutput": AgentOutput.model_json_schema(),
+    }
 
 
 # CRUD Operations

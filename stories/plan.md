@@ -60,7 +60,7 @@
 
 ## Core Agent System Stories
 
-- [ ] 7. **Setup Multi-Agent Framework** — Configure CrewAI orchestration with ADK compatibility
+- [x] 7. **Setup Multi-Agent Framework** — Configure CrewAI orchestration with ADK compatibility
 
   - **Scope:** CrewAI 0.186.1+ integration, agent contracts via Pydantic AI 1.0.8+, ADK protocol preparation, basic agent infrastructure
   - **Dependencies:** Story 6
